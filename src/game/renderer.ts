@@ -17,27 +17,27 @@ const spriteCache = new Map<string, HTMLImageElement>()
 // Load tree sprite
 const treeSprite = (() => {
     const img = new Image()
-    img.src = "/tree.png"
+    img.src = `${import.meta.env.BASE_URL}tree.png`
     return img
 })()
 
 // Load decorative sprites
 const stoneSprite = (() => {
     const img = new Image()
-    img.src = "/stone.png"
+    img.src = `${import.meta.env.BASE_URL}stone.png`
     return img
 })()
 
 const grassSprite = (() => {
     const img = new Image()
-    img.src = "/grass.png"
+    img.src = `${import.meta.env.BASE_URL}grass.png`
     return img
 })()
 
 // Load banana sprite
 const bananaSprite = (() => {
     const img = new Image()
-    img.src = "/banana.png"
+    img.src = `${import.meta.env.BASE_URL}banana.png`
     return img
 })()
 
@@ -51,19 +51,19 @@ const loadSprite = (src: string): HTMLImageElement => {
     }
 
     const img = new Image()
-    img.src = src
+    img.src = `${import.meta.env.BASE_URL}${src}`
     spriteCache.set(src, img)
     return img
 }
 
 // Load all sprites
-const walkSprites = [loadSprite("/walk1.png"), loadSprite("/walk2.png"), loadSprite("/walk3.png")]
+const walkSprites = [loadSprite("walk1.png"), loadSprite("walk2.png"), loadSprite("walk3.png")]
 
 const fightSprites = [
-    loadSprite("/fight1.png"),
-    loadSprite("/fight2.png"),
-    loadSprite("/fight3.png"),
-    loadSprite("/fight4.png")
+    loadSprite("fight1.png"),
+    loadSprite("fight2.png"),
+    loadSprite("fight3.png"),
+    loadSprite("fight4.png")
 ]
 
 const drawRoundedRect = (
