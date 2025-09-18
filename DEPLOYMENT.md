@@ -1,6 +1,6 @@
-# MonkeyPlanet Deployment Guide
+# MonkeyTrenches Deployment Guide
 
-This guide explains how to deploy the MonkeyPlanet webapp to GitHub Pages.
+This guide explains how to deploy the MonkeyTrenches webapp to GitHub Pages.
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ The project is configured with GitHub Actions for automatic deployment:
    - Go to your repository settings on GitHub
    - Navigate to "Pages" section
    - Set Source to "GitHub Actions"
-   - The site will be available at: `https://[username].github.io/MonkeyPlanet/`
+   - The site will be available at: `https://mathiasgilson.github.io/MonkeyTrenches/`
 
 ### Method 2: Manual Local Deployment
 
@@ -45,7 +45,7 @@ The script will:
 ### Vite Configuration
 
 The `vite.config.ts` is configured for GitHub Pages:
-- **Base path**: Set to `/MonkeyPlanet/` in production
+- **Base path**: Set to `/MonkeyTrenches/` in production
 - **Build output**: Generated in `dist/` directory
 - **Source maps**: Enabled for debugging
 
@@ -82,12 +82,15 @@ Located at `.github/workflows/deploy.yml`:
 
 ### Manual Cleanup
 
-If you need to reset the gh-pages branch:
+If you need to reset the deployment:
 
 ```bash
-git push origin --delete gh-pages
-git branch -D gh-pages
-npm run deploy
+# Clear any local build artifacts
+rm -rf dist
+npm run build
+
+# Force push to trigger new deployment
+git push origin main --force
 ```
 
 ## Development Workflow
