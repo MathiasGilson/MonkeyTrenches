@@ -6,11 +6,36 @@ function App() {
     const debugMode = new URLSearchParams(window.location.search).has("debug")
 
     return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: 16 }}>
-            <h1 style={{ marginTop: 0, marginBottom: 0 }}>Monkey Trenches</h1>
-            <h2 style={{ marginTop: 0, marginBottom: 0 }}>Each buy of 0.001 SOL will spawn a monkey for your team</h2>
-            <h2 style={{ marginTop: 0, marginBottom: 0 }}>your monkey will fight other monkeys to death</h2>
-            <h2 style={{ marginTop: 0, fontSize: 16 }}>Selling does not remove your monkeys</h2>
+        <div className="flex flex-col font-interference">
+            <div className="flex flex-col mb-6 p-4">
+                <div className="text-2xl mb-2">Monkey Trenches</div>
+                <div className="text-base">Each buy will spawn monkeys for your team based on SOL amount</div>
+                <div className="text-base">your monkeys will fight other monkeys to death</div>
+
+                <div className="p-3 text-white flex justify-center">
+                    <table className="border-collapse text-sm">
+                        <tbody>
+                            <tr>
+                                <td className="py-2 px-4 text-center text-xl">🐒</td>
+                                <td className="py-2 px-4 text-center text-xl">🐵</td>
+                                <td className="py-2 px-4 text-center text-xl">🦍</td>
+                            </tr>
+                            <tr>
+                                <td className="py-1 px-4 text-center text-xs">Small</td>
+                                <td className="py-1 px-4 text-center text-xs">Medium</td>
+                                <td className="py-1 px-4 text-center text-xs">Large</td>
+                            </tr>
+                            <tr>
+                                <td className="py-0.5 px-4 text-center text-xs font-bold">0.001 SOL</td>
+                                <td className="py-0.5 px-4 text-center text-xs font-bold">0.01 SOL</td>
+                                <td className="py-0.5 px-4 text-center text-xs font-bold">0.1 SOL</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div className="text-sm text-gray-500">Selling does not remove your monkeys</div>
+            </div>
 
             {import.meta.env.VITE_SOLANA_TOKEN || debugMode ? (
                 <GameCanvas tokenMint={import.meta.env.VITE_SOLANA_TOKEN} debugMode={debugMode} />

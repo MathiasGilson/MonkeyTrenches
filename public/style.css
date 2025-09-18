@@ -1,0 +1,79 @@
+/* Font Face Declarations */
+@font-face {
+  font-family: "PPFraktionMono-Medium";
+  src: url("./fonts/PPFraktionMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "PPFraktionMono-Regular";
+  src: url("./fonts/PPFraktionMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "KHInterference-Regular";
+  src: url("./fonts/KHInterference-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Chirp-Medium";
+  src: url("./fonts/Chirp-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Chirp-Regular";
+  src: url("./fonts/Chirp-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Chirp-Bold";
+  src: url("./fonts/Chirp-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Shorthand Classes */
+.font-mono-medium {
+  font-family: "PPFraktionMono-Medium", monospace;
+  font-weight: 500;
+}
+
+.font-mono-regular {
+  font-family: "PPFraktionMono-Regular", monospace;
+  font-weight: 400;
+}
+
+.font-interference {
+  font-family: "KHInterference-Regular", sans-serif;
+  font-weight: 400;
+}
+
+.font-chirp-medium {
+  font-family: "Chirp-Medium", sans-serif;
+  font-weight: 500;
+}
+
+.font-chirp-regular {
+  font-family: "Chirp-Regular", sans-serif;
+  font-weight: 400;
+}
+
+.font-chirp-bold {
+  font-family: "Chirp-Bold", sans-serif;
+  font-weight: 700;
+}

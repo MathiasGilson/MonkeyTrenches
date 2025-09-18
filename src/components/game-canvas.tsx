@@ -22,8 +22,8 @@ export type GameCanvasProps = {
     debugMode?: boolean
 }
 
-const DEFAULT_WIDTH = 960
-const DEFAULT_HEIGHT = 540
+const DEFAULT_WIDTH = 1100
+const DEFAULT_HEIGHT = 600
 
 const MIN_SOL_FOR_SPAWN = MONKEY_COSTS[MonkeyType.SMALL] // 0.001 SOL
 
@@ -292,8 +292,8 @@ const GameCanvas = ({
     })
 
     return (
-        <div style={{ display: "flex", gap: 16 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div className="flex w-full gap-4 justify-center">
+            <div className="flex flex-col gap-2">
                 {debugMode && (
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         <button
@@ -342,29 +342,7 @@ const GameCanvas = ({
                         )}
                     </div>
                 )}
-                {!debugMode && tokenMint && (
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <button
-                            onClick={handleReset}
-                            style={{
-                                padding: "8px 16px",
-                                backgroundColor: "#f59e0b",
-                                color: "white",
-                                border: "none",
-                                borderRadius: 4,
-                                cursor: "pointer",
-                                fontSize: "14px"
-                            }}
-                        >
-                            🔄 Reset Game & Filter
-                        </button>
-                        {resetTimestamp > 0 && (
-                            <span style={{ fontSize: "12px", color: "#6b7280" }}>
-                                Ignoring transactions before {new Date(resetTimestamp).toLocaleTimeString()}
-                            </span>
-                        )}
-                    </div>
-                )}
+
                 <canvas
                     ref={canvasRef}
                     style={{ width: `${width}px`, height: `${height}px`, border: "1px solid #111827", borderRadius: 8 }}
@@ -382,7 +360,22 @@ const GameCanvas = ({
                     color: "white"
                 }}
             >
-                <h3 style={{ margin: "0 0 16px 0", fontSize: 16 }}>Team Scoreboard</h3>
+                <h3 style={{ margin: "0 0 16px 0", fontSize: 16 }}>
+                    Team Scoreboard{" "}
+                    {!debugMode && tokenMint && (
+                        <div
+                            onClick={handleReset}
+                            style={{
+                                fontSize: "14px",
+                                display: "inline-block",
+                                cursor: "pointer"
+                            }}
+                        >
+                            🔄
+                        </div>
+                    )}
+                </h3>
+
                 <div style={{ maxHeight: height - 100, overflowY: "auto" }} key={forceUpdate}>
                     {Array.from(worldRef.current.teamStats.values())
                         .sort((a, b) => b.kills - a.kills)
