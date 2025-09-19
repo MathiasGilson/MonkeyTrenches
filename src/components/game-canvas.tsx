@@ -572,9 +572,19 @@ const GameCanvas = ({
 
                     <div style={{ maxHeight: height - 100 }} key={forceUpdate}>
                         {Array.from(worldRef.current.teamStats.values())
-                            .sort((a, b) => b.kills - a.kills)
-                            .map((stats, index) => {
-                                const isKing = index === 0
+                            .sort((a, b) => {
+                                // Sort by king status first, then by kills
+                                const kingWallet = getCurrentKing()?.wallet
+                                const aIsKing = a.wallet === kingWallet
+                                const bIsKing = b.wallet === kingWallet
+
+                                if (aIsKing && !bIsKing) return -1
+                                if (!aIsKing && bIsKing) return 1
+                                return b.kills - a.kills
+                            })
+                            .map((stats) => {
+                                const kingWallet = getCurrentKing()?.wallet
+                                const isKing = stats.wallet === kingWallet
                                 return (
                                     <div
                                         key={stats.wallet}
