@@ -8,27 +8,26 @@ function App() {
     return (
         <div className="flex flex-col font-interference">
             <div className="flex flex-col mb-6 p-4">
-                <div className="text-2xl mb-2">Monkey Trenches</div>
-                <div className="text-base">Each buy will spawn monkeys for your team based on SOL amount</div>
-                <div className="text-base">your monkeys will fight other monkeys to death</div>
+                <div className="text-2xl mb-2">👑 King of the Jungle</div>
+                <div className="text-base">Buy tokens to spawn monkeys. King of jungle gets reward.</div>
 
                 <div className="p-3 text-white flex justify-center">
                     <table className="border-collapse text-sm">
                         <tbody>
                             <tr>
-                                <td className="py-2 px-4 text-center text-xl">🐒</td>
-                                <td className="py-2 px-4 text-center text-xl">🐵</td>
-                                <td className="py-2 px-4 text-center text-xl">🦍</td>
+                                <td className="py-2 px-4 text-center text-2xl">🐒</td>
+                                <td className="py-2 px-4 text-center text-2xl">🐵</td>
+                                <td className="py-2 px-4 text-center text-2xl">🦍</td>
                             </tr>
                             <tr>
-                                <td className="py-1 px-4 text-center text-xs">Small</td>
-                                <td className="py-1 px-4 text-center text-xs">Medium</td>
-                                <td className="py-1 px-4 text-center text-xs">Large</td>
+                                <td className="py-1 px-4 text-center text-sm">Small</td>
+                                <td className="py-1 px-4 text-center text-sm">Medium</td>
+                                <td className="py-1 px-4 text-center text-sm">Large</td>
                             </tr>
                             <tr>
-                                <td className="py-0.5 px-4 text-center text-xs font-bold">0.001 SOL</td>
-                                <td className="py-0.5 px-4 text-center text-xs font-bold">0.01 SOL</td>
-                                <td className="py-0.5 px-4 text-center text-xs font-bold">0.1 SOL</td>
+                                <td className="py-0.5 px-4 text-center text-lime-500 text-base font-bold">0.001 SOL</td>
+                                <td className="py-0.5 px-4 text-center text-lime-500 text-base font-bold">0.01 SOL</td>
+                                <td className="py-0.5 px-4 text-center text-lime-500 text-base font-bold">0.1 SOL</td>
                             </tr>
                         </tbody>
                     </table>

@@ -521,12 +521,14 @@ export const stepWorld = ({
     world,
     dt,
     now,
-    config
+    config,
+    fightingEnabled = true
 }: {
     world: World
     dt: number
     now: number
     config: GameConfig
+    fightingEnabled?: boolean
 }): World => {
     const monkeys = world.monkeys.map((m) => ({
         ...m,
@@ -537,23 +539,29 @@ export const stepWorld = ({
     const next: Monkey[] = monkeys.map((self) => {
         let desiredVelocity: Vector2 = self.velocity
 
-        const allyInTrouble = findNearestThreatenedAlly(self, monkeys)
-        const enemy = allyInTrouble ?? findNearestEnemy(self, monkeys)
-
         let isFighting = false
-        if (enemy) {
-            const dist = Math.hypot(enemy.position.x - self.position.x, enemy.position.y - self.position.y)
-            if (dist <= ATTACK_RANGE) {
-                desiredVelocity = { x: 0, y: 0 }
-                isFighting = true
-            } else {
-                const dir = {
-                    x: (enemy.position.x - self.position.x) / (dist || 1),
-                    y: (enemy.position.y - self.position.y) / (dist || 1)
+        let enemy = null
+
+        if (fightingEnabled) {
+            const allyInTrouble = findNearestThreatenedAlly(self, monkeys)
+            enemy = allyInTrouble ?? findNearestEnemy(self, monkeys)
+
+            if (enemy) {
+                const dist = Math.hypot(enemy.position.x - self.position.x, enemy.position.y - self.position.y)
+                if (dist <= ATTACK_RANGE) {
+                    desiredVelocity = { x: 0, y: 0 }
+                    isFighting = true
+                } else {
+                    const dir = {
+                        x: (enemy.position.x - self.position.x) / (dist || 1),
+                        y: (enemy.position.y - self.position.y) / (dist || 1)
+                    }
+                    desiredVelocity = dir
                 }
-                desiredVelocity = dir
             }
-        } else {
+        }
+
+        if (!enemy) {
             // No enemy found - check if monkey should seek bananas
             const nearestBanana = findNearestBanana(self, world.bananas)
             if (nearestBanana) {
@@ -649,25 +657,32 @@ export const stepWorld = ({
         }
     })
 
-    // apply damage
-    for (const attacker of next) {
-        if (!attacker.targetId) continue
-        const victim = next.find((m) => m.id === attacker.targetId)
-        if (!victim) continue
-        if (victim.team === attacker.team) continue
-        const dist = Math.hypot(victim.position.x - attacker.position.x, victim.position.y - attacker.position.y)
-        if (dist <= ATTACK_RANGE) {
-            const attackerStats = getMonkeyStats(attacker.monkeyType)
-            const oldHp = victim.hp
-            victim.hp = Math.max(0, victim.hp - attackerStats.damage)
-            victim.isUnderAttack = true
+    // apply damage (only if fighting is enabled)
+    if (fightingEnabled) {
+        for (const attacker of next) {
+            if (!attacker.targetId) continue
+            const victim = next.find((m) => m.id === attacker.targetId)
+            if (!victim) continue
+            if (victim.team === attacker.team) continue
+            const dist = Math.hypot(victim.position.x - attacker.position.x, victim.position.y - attacker.position.y)
+            if (dist <= ATTACK_RANGE) {
+                const attackerStats = getMonkeyStats(attacker.monkeyType)
+                const oldHp = victim.hp
+                victim.hp = Math.max(0, victim.hp - attackerStats.damage)
+                victim.isUnderAttack = true
 
-            // Track kills when victim dies
-            if (oldHp > 0 && victim.hp <= 0) {
-                victim.killedBy = attacker.wallet
+                // Track kills when victim dies
+                if (oldHp > 0 && victim.hp <= 0) {
+                    victim.killedBy = attacker.wallet
+                }
             }
+            attacker.targetId = undefined
         }
-        attacker.targetId = undefined
+    } else {
+        // Clear all target IDs when fighting is disabled
+        for (const attacker of next) {
+            attacker.targetId = undefined
+        }
     }
 
     const alive = next.filter((m) => m.hp > 0)
