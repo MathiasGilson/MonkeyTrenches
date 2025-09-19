@@ -7,11 +7,12 @@ function App() {
 
     return (
         <div className="flex flex-col font-interference">
-            <div className="flex flex-col mb-6 p-4">
-                <div className="text-2xl mb-2">👑 King of the Jungle</div>
-                <div className="text-base">Buy tokens to spawn monkeys. King of jungle gets reward.</div>
-
-                <div className="p-3 text-white flex justify-center">
+            <div className="flex flex-col mb-2 p-4">
+                <div className="flex flex-col p-4 -ml-64">
+                    <div className="text-3xl mb-2">👑 King of the Jungle</div>
+                    <div className="text-2xl">Buy tokens to spawn monkeys. King of jungle gets reward.</div>
+                </div>
+                <div className="absolute top-16 right-5 p-3 text-white flex flex-col justify-center">
                     <table className="border-collapse text-sm">
                         <tbody>
                             <tr>
@@ -31,9 +32,8 @@ function App() {
                             </tr>
                         </tbody>
                     </table>
+                    <div className="text-sm text-gray-500">Selling does not remove your monkeys</div>
                 </div>
-
-                <div className="text-sm text-gray-500">Selling does not remove your monkeys</div>
             </div>
 
             {import.meta.env.VITE_SOLANA_TOKEN || debugMode ? (

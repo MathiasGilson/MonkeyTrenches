@@ -508,17 +508,19 @@ const GameCanvas = ({
                 </div>
             )}
 
-            <div className="flex flex-row gap-2 items-center justify-center">
-                <div className="text-xl font-bold wave-gold-text">{REWARD_SOL} SOL Reward</div>
+            <div className="flex flex-row gap-2 items-center justify-center mb-6 -ml-64">
+                <div className="text-4xl font-bold wave-gold-text">{REWARD_SOL} SOL Reward</div>
                 {countdownActive ? (
                     <>
-                        <div className="text-xl font-bold">to the King in</div>
-                        <div className={`text-xl font-mono ${countdown.isExpired ? "text-red-500" : "text-green-400"}`}>
+                        <div className="text-4xl font-bold">to the King in</div>
+                        <div
+                            className={`text-4xl font-mono ${countdown.isExpired ? "text-red-500" : "text-green-400"}`}
+                        >
                             {countdown.isExpired ? "BATTLE ENDED!" : formatCountdown(countdown.remaining)}
                         </div>
                     </>
                 ) : (
-                    <div className="text-xl font-bold text-gray-400">awaiting first king...</div>
+                    <div className="text-4xl font-bold text-gray-400">awaiting first king...</div>
                 )}
             </div>
             <div className="flex w-full gap-4 justify-center">
