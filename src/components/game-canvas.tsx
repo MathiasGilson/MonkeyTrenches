@@ -329,7 +329,13 @@ const GameCanvas = ({
     const getCurrentKing = (): TeamStats | null => {
         const teams = Array.from(worldRef.current.teamStats.values())
         if (teams.length === 0) return null
-        return teams.reduce((king, team) => (team.kills > king.kills ? team : king))
+
+        // Filter teams that have alive monkeys
+        const teamsWithAliveMonkeys = teams.filter((team) => team.alive > 0)
+        if (teamsWithAliveMonkeys.length === 0) return null
+
+        // Return the team with most kills among those with alive monkeys
+        return teamsWithAliveMonkeys.reduce((king, team) => (team.kills > king.kills ? team : king))
     }
 
     // Debug spawn function
