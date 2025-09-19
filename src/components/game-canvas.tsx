@@ -224,7 +224,7 @@ const GameCanvas = ({
 
         const COUNTDOWN_DURATION = debugMode
             ? 30 * 1000 // 30 seconds in debug mode
-            : 2 * 60 * 60 * 1000 // 2 hours in normal mode
+            : 30 * 60 * 1000 // 30 minutes in normal mode
         const elapsed = currentTime - countdownStartTime
         const remaining = Math.max(0, COUNTDOWN_DURATION - elapsed)
         const isExpired = remaining === 0
@@ -299,7 +299,7 @@ const GameCanvas = ({
         console.log(`🔄 Reset timestamp set to ${new Date(now).toLocaleString()}`)
         console.log("🚫 Future transactions before this time will be ignored")
         console.log("🧹 Game state cleared - all monkeys, teams, and bananas removed")
-        console.log(`⏰ Countdown will start when first king appears`)
+        console.log(`⏰ Countdown (30 minutes) will start when first king appears`)
     }
 
     // Helper functions for countdown and king
@@ -315,7 +315,7 @@ const GameCanvas = ({
     const getCountdownTime = (): { remaining: number; isExpired: boolean } => {
         const COUNTDOWN_DURATION = debugMode
             ? 30 * 1000 // 30 seconds in debug mode
-            : 2 * 60 * 60 * 1000 // 2 hours in normal mode
+            : 30 * 60 * 1000 // 30 minutes in normal mode
 
         if (!countdownActive) {
             return { remaining: COUNTDOWN_DURATION, isExpired: false }
