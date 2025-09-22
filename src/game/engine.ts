@@ -1,4 +1,4 @@
-import type { GameConfig, Monkey, Team, Vector2, World, Banana } from "./types"
+import type { GameConfig, Monkey, Vector2, World, Banana, TransactionEvent } from "./types"
 import { MonkeyType } from "./types"
 
 // Base monkey stats
@@ -18,11 +18,16 @@ const MAX_BANANAS = 5
 const BANANA_HEAL_PERCENT = 0.1 // 10% healing
 const BANANA_SIZE = 16
 
+// Monkey pricing constants (in SOL)
+const SMALL_MONKEY_PRICE = 0.1 // small monkey
+const MEDIUM_MONKEY_PRICE = 1 // medium monkey
+const BIG_MONKEY_PRICE = 10 // big monkey
+
 // Monkey type costs (in SOL)
 export const MONKEY_COSTS = {
-    [MonkeyType.SMALL]: 0.001,
-    [MonkeyType.MEDIUM]: 0.01,
-    [MonkeyType.BIG]: 0.1
+    [MonkeyType.SMALL]: SMALL_MONKEY_PRICE,
+    [MonkeyType.MEDIUM]: MEDIUM_MONKEY_PRICE,
+    [MonkeyType.BIG]: BIG_MONKEY_PRICE
 } as const
 
 // Monkey type stats
@@ -184,19 +189,17 @@ export const calculateMonkeySpawn = (solAmount: number): Array<{ type: MonkeyTyp
     return results
 }
 
-// Spawn multiple monkey types from a single purchase
+// Spawn multiple monkey types for a team
 export const spawnMultipleMonkeyTypes = ({
     world,
     monkeySpawns,
-    team,
-    wallet,
+    teamId,
     at,
     config
 }: {
     world: World
     monkeySpawns: Array<{ type: MonkeyType; count: number }>
-    team: Team
-    wallet: string
+    teamId: string
     at?: Vector2
     config: GameConfig
 }): World => {
@@ -208,8 +211,7 @@ export const spawnMultipleMonkeyTypes = ({
             currentWorld = spawnMonkeys({
                 world: currentWorld,
                 count,
-                team,
-                wallet,
+                teamId,
                 monkeyType: type,
                 at,
                 config
@@ -220,7 +222,12 @@ export const spawnMultipleMonkeyTypes = ({
     return currentWorld
 }
 
-export const createWorld = (): World => ({ monkeys: [], teamStats: new Map(), bananas: [] })
+export const createWorld = (): World => ({
+    monkeys: [],
+    teamStats: new Map(),
+    teamPools: new Map(),
+    bananas: []
+})
 
 const clamp = (value: number, min: number, max: number): number => {
     if (value < min) return min
@@ -244,37 +251,167 @@ const normalize = (vector: Vector2): Vector2 => {
 
 const generateId = (): string => `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 
-// Generate team color from wallet hash
-export const getTeamColor = (wallet: string): string => {
-    let hash = 0
-    for (let i = 0; i < wallet.length; i++) {
-        hash = (hash * 31 + wallet.charCodeAt(i)) >>> 0
-    }
+// Generate team color from team ID (0-9)
+export const getTeamColor = (teamId: string): string => {
+    const colors = [
+        "#DC143C", // Crimson Red - Team 0 (🇺🇸 United States)
+        "#0052CC", // Royal Blue - Team 1 (🇫🇷 France)
+        "#8B0000", // Dark Red - Team 2 (🇷🇺 Russia)
+        "#FF4500", // Orange Red - Team 3 (🇮🇳 India)
+        "#FFD700", // Gold Yellow - Team 4 (🇻🇳 Vietnam - star color)
+        "#006400", // Dark Green - Team 5 (🇵🇰 Pakistan)
+        "#800080", // Purple - Team 6 (🇮🇩 Indonesia - distinct from reds)
+        "#1E90FF", // Dodger Blue - Team 7 (🇵🇭 Philippines)
+        "#FF1493", // Deep Pink - Team 8 (🇳🇬 Nigeria - more distinct)
+        "#00CED1" // Dark Turquoise - Team 9 (🇧🇷 Brazil - unique blue-green)
+    ]
 
-    // Generate HSL color with good saturation and lightness
-    const hue = hash % 360
-    const saturation = 60 + (hash % 30) // 60-90%
-    const lightness = 45 + (hash % 20) // 45-65%
-
-    return `hsl(${hue}, ${saturation}%, ${lightness}%)`
+    const index = parseInt(teamId) % colors.length
+    return colors[index]
 }
 
-// Each wallet gets its own team (wallet address is the team ID)
-export const getTeamForWallet = (wallet: string): Team => wallet
+// Team ID is based on 2nd decimal digit after rounding up
+export const getTeamIdFromSolAmount = (solAmount: number): string => {
+    // Round up to nearest 0.01 to account for fees, then use 2nd decimal digit
+    // Examples:
+    // 0.00932 -> 0.01 -> team 1
+    // 0.08923 -> 0.09 -> team 9
+    // 0.0982 -> 0.10 -> team 0
+    // 0.009 -> 0.01 -> team 1 (user intended 0.01 but fees reduced it)
+
+    const roundedAmount = Math.ceil(solAmount * 100) / 100 // Round up to nearest 0.01
+    const secondDecimalDigit = Math.floor((roundedAmount * 100) % 10)
+
+    return secondDecimalDigit.toString()
+}
+
+// Get flag emoji for team
+export const getTeamFlag = (teamId: string): string => {
+    const flags = [
+        "🇺🇸", // Team 0 - United States
+        "🇫🇷", // Team 1 - France
+        "🇷🇺", // Team 2 - Russia
+        "🇮🇳", // Team 3 - India
+        "🇻🇳", // Team 4 - Vietnam
+        "🇵🇰", // Team 5 - Pakistan
+        "🇮🇩", // Team 6 - Indonesia
+        "🇵🇭", // Team 7 - Philippines
+        "🇳🇬", // Team 8 - Nigeria
+        "🇧🇷" // Team 9 - Brazil
+    ]
+
+    const index = parseInt(teamId) % flags.length
+    return flags[index]
+}
+
+// Process a transaction and update team pools
+export const processTransaction = (world: World, transaction: TransactionEvent): World => {
+    const newTeamPools = new Map(world.teamPools)
+    const newTeamStats = new Map(world.teamStats)
+
+    // Get or create team pool
+    let teamPool = newTeamPools.get(transaction.teamId)
+    if (!teamPool) {
+        teamPool = {
+            teamId: transaction.teamId,
+            totalSol: 0,
+            fundingWallets: new Map()
+        }
+        newTeamPools.set(transaction.teamId, teamPool)
+    }
+
+    // Get or create team stats
+    let teamStats = newTeamStats.get(transaction.teamId)
+    if (!teamStats) {
+        teamStats = {
+            teamId: transaction.teamId,
+            color: getTeamColor(transaction.teamId),
+            totalSol: 0,
+            spawned: 0,
+            alive: 0,
+            dead: 0,
+            kills: 0,
+            reserves: 0,
+            monkeyType: MonkeyType.SMALL,
+            fundingWallets: new Map()
+        }
+        newTeamStats.set(transaction.teamId, teamStats)
+    }
+
+    if (transaction.isSell) {
+        // Handle sell transaction - remove SOL from pool
+        const currentContribution = teamPool.fundingWallets.get(transaction.wallet) || 0
+
+        if (currentContribution > 0) {
+            const amountToRemove = Math.min(transaction.sol, currentContribution)
+
+            // Update team pool
+            teamPool.totalSol = Math.max(0, teamPool.totalSol - amountToRemove)
+            const newContribution = currentContribution - amountToRemove
+
+            if (newContribution <= 0) {
+                teamPool.fundingWallets.delete(transaction.wallet)
+                teamStats.fundingWallets.delete(transaction.wallet)
+            } else {
+                teamPool.fundingWallets.set(transaction.wallet, newContribution)
+                teamStats.fundingWallets.set(transaction.wallet, newContribution)
+            }
+
+            // Update team stats
+            teamStats.totalSol = teamPool.totalSol
+
+            console.log(
+                `💸 Sell: Team ${transaction.teamId} lost ${amountToRemove.toFixed(4)} SOL (${transaction.wallet.slice(
+                    0,
+                    8
+                )}...). Pool now: ${teamPool.totalSol.toFixed(4)} SOL`
+            )
+        } else {
+            console.log(
+                `⚠️ Sell ignored: Wallet ${transaction.wallet.slice(0, 8)}... has no contribution to team ${
+                    transaction.teamId
+                }`
+            )
+        }
+    } else {
+        // Handle buy transaction - add SOL to pool
+        const currentContribution = teamPool.fundingWallets.get(transaction.wallet) || 0
+        const newContribution = currentContribution + transaction.sol
+
+        // Update team pool
+        teamPool.totalSol += transaction.sol
+        teamPool.fundingWallets.set(transaction.wallet, newContribution)
+
+        // Update team stats
+        teamStats.totalSol = teamPool.totalSol
+        teamStats.fundingWallets.set(transaction.wallet, newContribution)
+
+        console.log(
+            `💰 Buy: Team ${transaction.teamId} gained ${transaction.sol.toFixed(4)} SOL (${transaction.wallet.slice(
+                0,
+                8
+            )}...). Pool now: ${teamPool.totalSol.toFixed(4)} SOL`
+        )
+    }
+
+    return {
+        ...world,
+        teamPools: newTeamPools,
+        teamStats: newTeamStats
+    }
+}
 
 export const spawnMonkeys = ({
     world,
     count,
-    team,
-    wallet,
+    teamId,
     monkeyType,
     at,
     config
 }: {
     world: World
     count: number
-    team: Team
-    wallet: string
+    teamId: string
     monkeyType: MonkeyType
     at?: Vector2
     config: GameConfig
@@ -282,7 +419,7 @@ export const spawnMonkeys = ({
     if (count <= 0) return world
 
     const newTeamStats = new Map(world.teamStats)
-    const existingStats = newTeamStats.get(wallet)
+    const existingStats = newTeamStats.get(teamId)
 
     // Calculate how many can actually spawn vs go to reserves
     const currentMonkeyCount = world.monkeys.length
@@ -300,25 +437,27 @@ export const spawnMonkeys = ({
             existingStats.monkeyType = monkeyType
         }
     } else {
-        newTeamStats.set(wallet, {
-            wallet,
-            team,
-            color: getTeamColor(wallet),
+        newTeamStats.set(teamId, {
+            teamId,
+            color: getTeamColor(teamId),
+            totalSol: 0,
             spawned: count,
             alive: monkeysToSpawn,
             dead: 0,
             kills: 0,
             reserves: monkeysToReserve,
-            monkeyType
+            monkeyType,
+            fundingWallets: new Map()
         })
     }
 
     // Only spawn the monkeys that fit
     if (monkeysToSpawn === 0) {
-        console.log(`🏦 All ${count} monkeys for ${wallet.slice(0, 8)}... went to reserves (world full)`)
+        console.log(`🏦 All ${count} monkeys for team ${teamId} went to reserves (world full)`)
         return {
             monkeys: world.monkeys,
             teamStats: newTeamStats,
+            teamPools: world.teamPools,
             bananas: world.bananas
         }
     }
@@ -331,8 +470,7 @@ export const spawnMonkeys = ({
     const stats = getMonkeyStats(monkeyType)
     const newMonkeys: Monkey[] = Array.from({ length: monkeysToSpawn }).map(() => ({
         id: generateId(),
-        wallet,
-        team,
+        teamId,
         monkeyType,
         position: {
             x: spawnPos.x + (Math.random() - 0.5) * 40, // Spread spawn slightly
@@ -354,16 +492,15 @@ export const spawnMonkeys = ({
     }))
 
     if (monkeysToReserve > 0) {
-        console.log(
-            `🐵 Spawned ${monkeysToSpawn} monkeys for ${wallet.slice(0, 8)}..., ${monkeysToReserve} went to reserves`
-        )
+        console.log(`🐵 Spawned ${monkeysToSpawn} monkeys for team ${teamId}, ${monkeysToReserve} went to reserves`)
     } else {
-        console.log(`🐵 Spawned ${monkeysToSpawn} monkeys for ${wallet.slice(0, 8)}...`)
+        console.log(`🐵 Spawned ${monkeysToSpawn} monkeys for team ${teamId}`)
     }
 
     return {
         monkeys: [...world.monkeys, ...newMonkeys],
         teamStats: newTeamStats,
+        teamPools: world.teamPools,
         bananas: world.bananas
     }
 }
@@ -380,7 +517,7 @@ const spawnFromReserves = (world: World, config: GameConfig): World => {
     let slotsUsed = 0
 
     // Go through teams that have reserves and spawn monkeys
-    for (const [wallet, stats] of newTeamStats.entries()) {
+    for (const [teamId, stats] of newTeamStats.entries()) {
         if (stats.reserves === 0 || slotsUsed >= availableSlots) continue
 
         const monkeysToSpawn = Math.min(stats.reserves, availableSlots - slotsUsed)
@@ -396,8 +533,7 @@ const spawnFromReserves = (world: World, config: GameConfig): World => {
         for (let i = 0; i < monkeysToSpawn; i++) {
             newMonkeys.push({
                 id: generateId(),
-                wallet,
-                team: stats.team,
+                teamId,
                 monkeyType: stats.monkeyType,
                 position: {
                     x: spawnPos.x + (Math.random() - 0.5) * 40,
@@ -425,7 +561,7 @@ const spawnFromReserves = (world: World, config: GameConfig): World => {
         slotsUsed += monkeysToSpawn
 
         if (monkeysToSpawn > 0) {
-            console.log(`🏦 Spawned ${monkeysToSpawn} monkeys from reserves for ${wallet.slice(0, 8)}...`)
+            console.log(`🏦 Spawned ${monkeysToSpawn} monkeys from reserves for team ${teamId}`)
         }
     }
 
@@ -434,6 +570,7 @@ const spawnFromReserves = (world: World, config: GameConfig): World => {
     return {
         monkeys: [...world.monkeys, ...newMonkeys],
         teamStats: newTeamStats,
+        teamPools: world.teamPools,
         bananas: world.bananas
     }
 }
@@ -442,7 +579,7 @@ const findNearestEnemy = (self: Monkey, monkeys: Monkey[]): Monkey | undefined =
     let nearest: Monkey | undefined
     let bestDist = Infinity
     for (const other of monkeys) {
-        if (other.team === self.team) continue
+        if (other.teamId === self.teamId) continue
         const d = Math.hypot(other.position.x - self.position.x, other.position.y - self.position.y)
         if (d < bestDist) {
             bestDist = d
@@ -456,7 +593,7 @@ const findNearestThreatenedAlly = (self: Monkey, monkeys: Monkey[]): Monkey | un
     let nearest: Monkey | undefined
     let bestDist = Infinity
     for (const other of monkeys) {
-        if (other.team !== self.team) continue
+        if (other.teamId !== self.teamId) continue
         if (!other.isUnderAttack) continue
         const d = Math.hypot(other.position.x - self.position.x, other.position.y - self.position.y)
         if (d < bestDist) {
@@ -663,7 +800,7 @@ export const stepWorld = ({
             if (!attacker.targetId) continue
             const victim = next.find((m) => m.id === attacker.targetId)
             if (!victim) continue
-            if (victim.team === attacker.team) continue
+            if (victim.teamId === attacker.teamId) continue
             const dist = Math.hypot(victim.position.x - attacker.position.x, victim.position.y - attacker.position.y)
             if (dist <= ATTACK_RANGE) {
                 const attackerStats = getMonkeyStats(attacker.monkeyType)
@@ -673,7 +810,7 @@ export const stepWorld = ({
 
                 // Track kills when victim dies
                 if (oldHp > 0 && victim.hp <= 0) {
-                    victim.killedBy = attacker.wallet
+                    victim.killedBy = attacker.teamId
                 }
             }
             attacker.targetId = undefined
@@ -691,7 +828,7 @@ export const stepWorld = ({
     // Update team stats for deaths and kills
     const updatedTeamStats = new Map(world.teamStats)
     for (const deadMonkey of dead) {
-        const stats = updatedTeamStats.get(deadMonkey.wallet)
+        const stats = updatedTeamStats.get(deadMonkey.teamId)
         if (stats) {
             stats.alive = Math.max(0, stats.alive - 1)
             stats.dead += 1
@@ -707,12 +844,17 @@ export const stepWorld = ({
     }
 
     // Update alive counts based on current monkeys
-    for (const [wallet, stats] of updatedTeamStats.entries()) {
-        const currentAlive = alive.filter((m) => m.wallet === wallet).length
+    for (const [teamId, stats] of updatedTeamStats.entries()) {
+        const currentAlive = alive.filter((m) => m.teamId === teamId).length
         stats.alive = currentAlive
     }
 
-    let worldWithUpdatedStats = { monkeys: alive, teamStats: updatedTeamStats, bananas: world.bananas }
+    let worldWithUpdatedStats = {
+        monkeys: alive,
+        teamStats: updatedTeamStats,
+        teamPools: world.teamPools,
+        bananas: world.bananas
+    }
 
     // Spawn from reserves if monkeys died and there's space
     if (dead.length > 0) {
@@ -728,7 +870,31 @@ export const stepWorld = ({
     return worldWithUpdatedStats
 }
 
-export const pickTeamByWallet = (wallet: string): Team => {
-    // Each wallet is its own team
-    return getTeamForWallet(wallet)
+// Spawn monkeys based on team pool amounts - called by timer
+export const spawnMonkeysFromPools = (world: World, config: GameConfig): World => {
+    let updatedWorld = world
+
+    // Process each team pool
+    for (const [teamId, pool] of world.teamPools.entries()) {
+        if (pool.totalSol > 0) {
+            const monkeySpawns = calculateMonkeySpawn(pool.totalSol)
+
+            // Spawn each monkey type sequentially
+            for (const { type, count } of monkeySpawns) {
+                if (count > 0) {
+                    updatedWorld = spawnMonkeys({
+                        world: updatedWorld,
+                        count,
+                        teamId,
+                        monkeyType: type,
+                        config
+                    })
+                }
+            }
+
+            console.log(`⏰ Timer spawn: Team ${teamId} spawned monkeys based on ${pool.totalSol.toFixed(4)} SOL pool`)
+        }
+    }
+
+    return updatedWorld
 }

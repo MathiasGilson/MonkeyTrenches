@@ -1,5 +1,5 @@
 import type { GameConfig, Monkey, Tree, Decoration, World, Banana } from "./types"
-import { getTeamColor, getMonkeyStats } from "./engine"
+import { getTeamFlag, getMonkeyStats } from "./engine"
 
 // Type for depth-sorted rendering objects
 type RenderObject = {
@@ -120,17 +120,15 @@ const drawMonkey = (ctx: CanvasRenderingContext2D, m: Monkey): void => {
         ctx.stroke()
     }
 
-    // Team color circle above health bar
-    const circleRadius = Math.max(4, size * 0.08) // Scale circle with monkey size
-    const circleX = m.position.x
-    const circleY = y - 15 // Fixed position since bars are now horizontal
-    ctx.fillStyle = getTeamColor(m.wallet)
-    ctx.beginPath()
-    ctx.arc(circleX, circleY, circleRadius, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.strokeStyle = "#ffffff"
-    ctx.lineWidth = 1
-    ctx.stroke()
+    // Team flag above health bar
+    const flagSize = Math.max(12, size * 0.25) // Scale flag with monkey size
+    const flagY = y - 15 - flagSize / 2 // Position above health bar
+
+    // Draw flag emoji
+    ctx.font = `${flagSize}px Arial`
+    ctx.textAlign = "center"
+    ctx.textBaseline = "middle"
+    ctx.fillText(getTeamFlag(m.teamId), m.position.x, flagY + flagSize / 2)
 
     // Multi-bar health system (horizontal layout)
     const totalBars = stats.healthBars

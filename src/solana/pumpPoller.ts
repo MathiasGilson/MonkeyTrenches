@@ -1,4 +1,4 @@
-import type { BuyEvent } from "../game/types"
+import type { TransactionEvent } from "../game/types"
 
 const BASE_URL = "https://public-api.birdeye.so"
 const API_KEY = import.meta.env.VITE_BIRDEYE_API_KEY || "4cc73c006df741c988da1a6fbdef8281"
@@ -9,7 +9,7 @@ export type PumpPollerConfig = {
 }
 
 export type PumpPoller = {
-    start: (onBuy: (buy: BuyEvent) => void) => void
+    start: (onTransaction: (transaction: TransactionEvent) => void) => void
     stop: () => void
     isRunning: () => boolean
 }
@@ -91,19 +91,73 @@ const fetchTokenTransactions = async (tokenMint: string, offset: number = 0): Pr
     return await response.json()
 }
 
-const isTokenBuyTransaction = (tx: BirdeyeTransaction, tokenMint: string): boolean => {
+const isRelevantTransaction = (tx: BirdeyeTransaction, tokenMint: string): { isBuy: boolean; isSell: boolean } => {
     // A buy transaction is when:
     // 1. The side is "buy"
     // 2. The from token is SOL and the to token is our target token
-    return tx.side === "buy" && tx.from.address === SOL_MINT && tx.to.address === tokenMint
+    const isBuy = tx.side === "buy" && tx.from.address === SOL_MINT && tx.to.address === tokenMint
+
+    // A sell transaction is when:
+    // 1. The side is "sell"
+    // 2. The from token is our target token and the to token is SOL
+    const isSell = tx.side === "sell" && tx.from.address === tokenMint && tx.to.address === SOL_MINT
+
+    return { isBuy, isSell }
 }
 
-const extractSolSpent = (tx: BirdeyeTransaction): { wallet: string; sol: number } => {
-    // Use the uiAmount from the 'from' token (SOL) which is already in human-readable format
+const extractTransactionData = (
+    tx: BirdeyeTransaction,
+    isBuy: boolean
+): { wallet: string; sol: number; originalSol: number } => {
+    // For buy transactions: SOL spent (from field) - includes fees
+    // For sell transactions: SOL received (to field) - after fees
+    const actualSolAmount = isBuy ? tx.from.uiAmount : tx.to.uiAmount
+
+    // Method 1: Use quote/base relationship (more reliable than price calculation)
+    let originalSolAmount = actualSolAmount
+
+    if (isBuy) {
+        // For buys: Use quote.uiAmount (should be the intended SOL before fees)
+        // The quote is usually SOL in SOL->Token swaps
+        if (tx.quote && tx.quote.address === SOL_MINT) {
+            originalSolAmount = tx.quote.uiAmount
+        }
+        // Fallback: Add estimated fees back (typically 0.5-2% for DEX trades)
+        else {
+            const estimatedFeeRate = 0.015 // 1.5% typical fee for pump.fun
+            originalSolAmount = actualSolAmount / (1 - estimatedFeeRate)
+        }
+    } else {
+        // For sells: Use quote.uiAmount (should be the expected SOL before fees)
+        if (tx.quote && tx.quote.address === SOL_MINT) {
+            originalSolAmount = tx.quote.uiAmount
+        }
+        // Fallback: Add estimated fees back
+        else {
+            const estimatedFeeRate = 0.015 // 1.5% typical fee for pump.fun
+            originalSolAmount = actualSolAmount / (1 - estimatedFeeRate)
+        }
+    }
+
     return {
         wallet: tx.owner,
-        sol: tx.from.uiAmount
+        sol: actualSolAmount, // Keep actual for backward compatibility
+        originalSol: originalSolAmount // New field for fee-excluded amount
     }
+}
+
+const getTeamIdFromSolAmount = (solAmount: number): string => {
+    // Round up to nearest 0.01 to account for fees, then use 2nd decimal digit
+    // Examples:
+    // 0.00932 -> 0.01 -> team 1
+    // 0.08923 -> 0.09 -> team 9
+    // 0.0982 -> 0.10 -> team 0
+    // 0.009 -> 0.01 -> team 1 (user intended 0.01 but fees reduced it)
+
+    const roundedAmount = Math.ceil(solAmount * 100) / 100 // Round up to nearest 0.01
+    const secondDecimalDigit = Math.floor((roundedAmount * 100) % 10)
+
+    return secondDecimalDigit.toString()
 }
 
 export const createPumpPoller = ({ tokenMint, pollIntervalMs = DEFAULT_INTERVAL }: PumpPollerConfig): PumpPoller => {
@@ -114,7 +168,7 @@ export const createPumpPoller = ({ tokenMint, pollIntervalMs = DEFAULT_INTERVAL 
         lastTimestamp: undefined
     }
 
-    const start = (onBuy: (buy: BuyEvent) => void): void => {
+    const start = (onTransaction: (transaction: TransactionEvent) => void): void => {
         if (running) return
         running = true
         console.log("🚀 Starting Birdeye pump poller for token:", tokenMint)
@@ -150,39 +204,47 @@ export const createPumpPoller = ({ tokenMint, pollIntervalMs = DEFAULT_INTERVAL 
                     try {
                         console.log("🔍 Processing transaction:", tx)
 
-                        // Check if this is a token buy transaction (SOL -> Token)
-                        if (!isTokenBuyTransaction(tx, tokenMint)) {
-                            console.log("⏭️  Skipping non-buy transaction:", tx.txHash)
+                        // Check if this is a relevant transaction (buy or sell)
+                        const { isBuy, isSell } = isRelevantTransaction(tx, tokenMint)
+
+                        if (!isBuy && !isSell) {
+                            console.log("⏭️  Skipping irrelevant transaction:", tx.txHash)
                             history.processedTransactions.add(tx.txHash)
                             continue
                         }
 
-                        // Extract SOL spent information
-                        const solData = extractSolSpent(tx)
+                        // Extract transaction data
+                        const transactionData = extractTransactionData(tx, isBuy)
+                        // Use actual SOL amount with smart rounding for team assignment
+                        const teamId = getTeamIdFromSolAmount(transactionData.sol)
+                        // Calculate rounded amount for pool (what user intended to spend)
+                        const roundedSol = Math.ceil(transactionData.sol * 100) / 100
 
-                        // Convert to lamports for consistency with existing code
-                        const lamports = Math.floor(solData.sol * 1_000_000_000) // SOL_PER_LAMPORT
-
-                        const event: BuyEvent = {
+                        const event: TransactionEvent = {
                             signature: tx.txHash,
-                            wallet: solData.wallet,
-                            lamports,
-                            sol: solData.sol,
+                            wallet: transactionData.wallet,
+                            sol: roundedSol, // Use rounded amount for pool calculations
+                            isSell: isSell,
+                            teamId,
                             ts: tx.blockUnixTime * 1000 // Convert to milliseconds
                         }
 
-                        console.log("💰 Buy event detected:", {
+                        if (isBuy) {
+                            console.log(`💰 BUY`, tx)
+                        }
+                        console.log(`💰 ${isBuy ? "Buy" : "Sell"} event detected:`, {
                             signature: tx.txHash,
-                            wallet: solData.wallet.slice(0, 8) + "...",
-                            sol: solData.sol.toFixed(4),
-                            lamports,
-                            targetAmount: tx.to.uiAmount,
-                            targetSymbol: tx.to.symbol,
+                            wallet: transactionData.wallet.slice(0, 8) + "...",
+                            actualSol: transactionData.sol.toFixed(4), // Actual SOL (after fees)
+                            roundedSol: roundedSol.toFixed(2), // Rounded amount (what user intended)
+                            teamId,
+                            side: tx.side,
                             source: tx.source,
-                            side: tx.side
+                            // Team assignment logic
+                            teamLogic: `${transactionData.sol.toFixed(4)} -> ${roundedSol.toFixed(2)} -> team ${teamId}`
                         })
 
-                        onBuy(event)
+                        onTransaction(event)
                     } catch (txError) {
                         console.error("❌ Error processing transaction:", tx.txHash, txError)
                     }

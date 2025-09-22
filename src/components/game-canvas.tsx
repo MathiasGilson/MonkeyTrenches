@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react"
 import type { ReactElement } from "react"
 import type {} from "react/jsx-runtime"
-import Confetti from "react-confetti"
+// import Confetti from "react-confetti" // Removed - no longer needed
 import {
     createWorld,
-    pickTeamByWallet,
-    spawnMonkeys,
     stepWorld,
-    calculateMonkeySpawn,
-    spawnMultipleMonkeyTypes,
+    processTransaction,
+    spawnMonkeysFromPools,
+    getTeamFlag,
+    getTeamColor,
+    getTeamIdFromSolAmount,
     MONKEY_COSTS
 } from "../game/engine"
 import { renderWorld } from "../game/renderer"
@@ -21,13 +22,15 @@ export type GameCanvasProps = {
     height?: number
     tokenMint: string
     debugMode?: boolean
+    onTeamStatsUpdate?: (teams: TeamStats[]) => void
 }
 
 const DEFAULT_WIDTH = 1100
 const DEFAULT_HEIGHT = 600
-const REWARD_SOL = 5 // SOL reward for the king when countdown ends
+const SPAWN_TIMER_MS = 60 * 1000 // 1 minute
 
-const MIN_SOL_FOR_SPAWN = MONKEY_COSTS[MonkeyType.SMALL] // 0.001 SOL
+// Transaction and debug constants
+const MIN_SOL_FOR_TRANSACTION = MONKEY_COSTS[MonkeyType.SMALL] // Minimum transaction size
 
 const createConfig = (width: number, height: number): GameConfig => {
     // Generate random trees
@@ -149,14 +152,14 @@ const drawDebugStats = (ctx: CanvasRenderingContext2D, world: World): void => {
     ctx.fillStyle = "#ffffff"
     ctx.font = "12px monospace"
     ctx.fillText(`Total Monkeys: ${world.monkeys.length}`, 8, 16)
-    ctx.fillText(`Active Teams: ${world.teamStats.size}`, 8, 32)
 }
 
 const GameCanvas = ({
     width = DEFAULT_WIDTH,
     height = DEFAULT_HEIGHT,
     tokenMint,
-    debugMode = false
+    debugMode = false,
+    onTeamStatsUpdate
 }: GameCanvasProps): ReactElement => {
     const canvasRef = useRef<HTMLCanvasElement | null>(null)
     const worldRef = useRef<World>(createWorld())
@@ -164,13 +167,15 @@ const GameCanvas = ({
     const ctxRef = useRef<CanvasRenderingContext2D | null>(null)
     const [forceUpdate, setForceUpdate] = useState(0)
     const [resetTimestamp, setResetTimestamp] = useState<number>(0)
-    const [countdownStartTime, setCountdownStartTime] = useState<number>(Date.now())
+    const [lastSpawnTime, setLastSpawnTime] = useState<number>(Date.now())
     const [currentTime, setCurrentTime] = useState<number>(Date.now())
-    const [currentKingWallet, setCurrentKingWallet] = useState<string | null>(null)
-    const [showConfetti, setShowConfetti] = useState<boolean>(false)
-    const [winner, setWinner] = useState<TeamStats | null>(null)
-    const [showWinnerModal, setShowWinnerModal] = useState<boolean>(false)
-    const [countdownActive, setCountdownActive] = useState<boolean>(false)
+    const [lastTransaction, setLastTransaction] = useState<{
+        wallet: string
+        sol: number
+        teamId: string
+        isSell: boolean
+        timestamp: number
+    } | null>(null)
 
     // setup canvas context
     useEffect(() => {
@@ -183,7 +188,7 @@ const GameCanvas = ({
         ctxRef.current = ctx
     }, [width, height])
 
-    // Countdown timer
+    // Update current time every second for UI countdown
     useEffect(() => {
         const interval = setInterval(() => {
             setCurrentTime(Date.now())
@@ -191,90 +196,45 @@ const GameCanvas = ({
         return () => clearInterval(interval)
     }, [])
 
-    // Monitor king changes and manage countdown
+    // Spawn timer - spawn monkeys every minute based on pool amounts
     useEffect(() => {
-        const king = getCurrentKing()
-        const newKingWallet = king?.wallet || null
-        const hasKingWithKills = king !== null && king.kills > 0
-
-        // Check if we should start/stop the countdown
-        if (hasKingWithKills && !countdownActive) {
-            // Start countdown - first king with kills
+        const interval = setInterval(() => {
             const now = Date.now()
-            setCountdownStartTime(now)
-            setCountdownActive(true)
-            console.log(`👑 First king detected: ${newKingWallet?.slice(0, 8)}... - Countdown started!`)
-        } else if (hasKingWithKills && countdownActive && currentKingWallet !== newKingWallet) {
-            // Reset countdown - new king
-            const now = Date.now()
-            setCountdownStartTime(now)
-            console.log(`👑 New king detected: ${newKingWallet?.slice(0, 8)}... - Countdown reset!`)
-        } else if (!hasKingWithKills && countdownActive) {
-            // Stop countdown - no king with kills
-            setCountdownActive(false)
-            console.log(`⏹️ No king with kills - Countdown stopped`)
-        }
-
-        setCurrentKingWallet(newKingWallet)
-    }, [forceUpdate, currentKingWallet, debugMode, countdownActive])
-
-    // Handle countdown expiration and confetti
-    useEffect(() => {
-        if (!countdownActive) return
-
-        const COUNTDOWN_DURATION = debugMode
-            ? 30 * 1000 // 30 seconds in debug mode
-            : 30 * 60 * 1000 // 30 minutes in normal mode
-        const elapsed = currentTime - countdownStartTime
-        const remaining = Math.max(0, COUNTDOWN_DURATION - elapsed)
-        const isExpired = remaining === 0
-
-        if (isExpired && !showConfetti && currentKingWallet) {
-            const currentKing = getCurrentKing()
-            if (currentKing) {
-                setWinner(currentKing)
-                setShowWinnerModal(true)
-                setShowConfetti(true)
-                setCountdownActive(false) // Stop countdown after win
-                console.log(`🎉 Countdown ended! King ${currentKingWallet.slice(0, 8)}... wins ${REWARD_SOL} SOL!`)
-                // Confetti will run until modal is closed
+            if (now - lastSpawnTime >= SPAWN_TIMER_MS) {
+                console.log("⏰ Spawn timer triggered - spawning monkeys from team pools")
+                worldRef.current = spawnMonkeysFromPools(worldRef.current, configRef.current)
+                setLastSpawnTime(now)
+                setForceUpdate((prev) => prev + 1) // Force React re-render for scoreboard
             }
-        }
-    }, [currentTime, showConfetti, currentKingWallet, countdownStartTime, debugMode, countdownActive])
+        }, 1000) // Check every second
 
-    // Jupiter API poller for buy events
+        return () => clearInterval(interval)
+    }, [lastSpawnTime])
+
+    // Transaction poller for buy/sell events
     useEffect(() => {
         if (!tokenMint || debugMode) return
         const poller = createPumpPoller({ tokenMint })
-        poller.start((buy) => {
-            if (buy.sol < MIN_SOL_FOR_SPAWN) return
+        poller.start((transaction) => {
+            if (transaction.sol < MIN_SOL_FOR_TRANSACTION) return
 
             // Ignore transactions that occurred before the reset timestamp
-            if (resetTimestamp > 0 && buy.ts < resetTimestamp) {
-                console.log(`🚫 Ignoring pre-reset transaction from ${new Date(buy.ts).toLocaleTimeString()}`)
+            if (resetTimestamp > 0 && transaction.ts < resetTimestamp) {
+                console.log(`🚫 Ignoring pre-reset transaction from ${new Date(transaction.ts).toLocaleTimeString()}`)
                 return
             }
 
-            const monkeySpawns = calculateMonkeySpawn(buy.sol)
-            const team = pickTeamByWallet(buy.wallet)
+            // Process the transaction and update team pools
+            worldRef.current = processTransaction(worldRef.current, transaction)
 
-            const oldMonkeyCount = worldRef.current.monkeys.length
-            console.log(`🐵 Before spawn: ${oldMonkeyCount} monkeys`)
-
-            // Log what types are being spawned
-            const spawnSummary = monkeySpawns.map(({ type, count }) => `${count} ${type}`).join(", ")
-            console.log(`🔥 Spawning ${spawnSummary} monkeys for wallet ${buy.wallet.slice(0, 8)}... (${buy.sol} SOL)`)
-
-            worldRef.current = spawnMultipleMonkeyTypes({
-                world: worldRef.current,
-                monkeySpawns,
-                team,
-                wallet: buy.wallet,
-                config: configRef.current
+            // Update last transaction for toast
+            setLastTransaction({
+                wallet: transaction.wallet,
+                sol: transaction.sol,
+                teamId: transaction.teamId,
+                isSell: transaction.isSell,
+                timestamp: Date.now()
             })
-
-            const newMonkeyCount = worldRef.current.monkeys.length
-            console.log(`🎯 After spawn: ${newMonkeyCount} monkeys (added ${newMonkeyCount - oldMonkeyCount})`)
 
             setForceUpdate((prev) => prev + 1) // Force React re-render for scoreboard
         })
@@ -285,12 +245,8 @@ const GameCanvas = ({
     const handleReset = (): void => {
         const now = Date.now()
         setResetTimestamp(now)
-        setCountdownStartTime(now) // Reset countdown timer
-        setCurrentKingWallet(null) // Reset king tracking
-        setShowConfetti(false) // Hide confetti
-        setShowWinnerModal(false) // Hide winner modal
-        setWinner(null) // Clear winner
-        setCountdownActive(false) // Stop countdown
+        setLastSpawnTime(now) // Reset spawn timer
+        setLastTransaction(null) // Clear toast
 
         // Clear the game state
         worldRef.current = createWorld()
@@ -299,31 +255,20 @@ const GameCanvas = ({
         console.log(`🔄 Reset timestamp set to ${new Date(now).toLocaleString()}`)
         console.log("🚫 Future transactions before this time will be ignored")
         console.log("🧹 Game state cleared - all monkeys, teams, and bananas removed")
-        console.log(`⏰ Countdown (30 minutes) will start when first king appears`)
+        console.log(`⏰ Spawn timer reset - next spawn in 1 minute`)
     }
 
-    // Helper functions for countdown and king
-    const formatCountdown = (timeMs: number): string => {
-        const hours = Math.floor(timeMs / (1000 * 60 * 60))
-        const minutes = Math.floor((timeMs % (1000 * 60 * 60)) / (1000 * 60))
+    // Helper function to get next spawn time
+    const getNextSpawnTime = (): { remaining: number; nextSpawnAt: number } => {
+        const nextSpawnAt = lastSpawnTime + SPAWN_TIMER_MS
+        const remaining = Math.max(0, nextSpawnAt - currentTime)
+        return { remaining, nextSpawnAt }
+    }
+
+    const formatSpawnTimer = (timeMs: number): string => {
+        const minutes = Math.floor(timeMs / (1000 * 60))
         const seconds = Math.floor((timeMs % (1000 * 60)) / 1000)
-        return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds
-            .toString()
-            .padStart(2, "0")}`
-    }
-
-    const getCountdownTime = (): { remaining: number; isExpired: boolean } => {
-        const COUNTDOWN_DURATION = debugMode
-            ? 30 * 1000 // 30 seconds in debug mode
-            : 30 * 60 * 1000 // 30 minutes in normal mode
-
-        if (!countdownActive) {
-            return { remaining: COUNTDOWN_DURATION, isExpired: false }
-        }
-
-        const elapsed = currentTime - countdownStartTime
-        const remaining = Math.max(0, COUNTDOWN_DURATION - elapsed)
-        return { remaining, isExpired: remaining === 0 }
+        return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
     }
 
     const getCurrentKing = (): TeamStats | null => {
@@ -340,48 +285,46 @@ const GameCanvas = ({
 
     // Debug spawn function
     const spawnRandomMonkeys = (): void => {
-        const count = 1 // Only one monkey at a time
+        // Generate a SOL amount that will target a specific team
+        const targetTeam = Math.floor(Math.random() * 10) // 0-9
 
-        // Randomly choose monkey type for debug
-        const monkeyTypes = [MonkeyType.SMALL, MonkeyType.MEDIUM, MonkeyType.BIG]
-        const monkeyType = monkeyTypes[Math.floor(Math.random() * monkeyTypes.length)]
-
-        // 50% chance to use existing team if teams exist, otherwise create new
-        const existingTeams = Array.from(worldRef.current.teamStats.keys())
-        const useExistingTeam = existingTeams.length > 0 && Math.random() > 0.5
-
-        let wallet: string
-        if (useExistingTeam) {
-            // Pick random existing team
-            wallet = existingTeams[Math.floor(Math.random() * existingTeams.length)]
+        // Generate correct SOL amount for each team based on the rounding logic
+        let solAmount: number
+        if (targetTeam === 0) {
+            solAmount = 0.1 // Rounds to 0.10, second decimal = 0
+        } else if (targetTeam === 7) {
+            solAmount = 0.17 // Rounds to 0.17, second decimal = 7
         } else {
-            // Create new team
-            wallet = `debug_${Math.random().toString(36).slice(2, 8)}_${Date.now()}`
+            solAmount = targetTeam / 100 // 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.09
         }
 
-        const team = pickTeamByWallet(wallet)
-        const at = {
-            x: Math.random() * (configRef.current.width - 100) + 50,
-            y: Math.random() * (configRef.current.height - 100) + 50
+        // Add minimal randomness while keeping team assignment correct
+        const randomOffset = (Math.random() - 0.5) * 0.002 // ±0.001 variation
+        solAmount = Math.max(0.001, solAmount + randomOffset)
+        solAmount = parseFloat(solAmount.toFixed(3))
+
+        const teamId = getTeamIdFromSolAmount(solAmount)
+
+        const debugTransaction = {
+            signature: `debug_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            wallet: `debug_wallet_${Math.random().toString(36).slice(2, 8)}`,
+            sol: solAmount,
+            isSell: false,
+            teamId,
+            ts: Date.now()
         }
 
-        const oldMonkeyCount = worldRef.current.monkeys.length
-        console.log(`🐵 [DEBUG] Before spawn: ${oldMonkeyCount} monkeys`)
+        console.log(`🐵 [DEBUG] Adding ${solAmount.toFixed(3)} SOL to team ${teamId} ${getTeamFlag(teamId)}`)
+        worldRef.current = processTransaction(worldRef.current, debugTransaction)
 
-        worldRef.current = spawnMonkeys({
-            world: worldRef.current,
-            count,
-            team,
-            wallet,
-            monkeyType,
-            at,
-            config: configRef.current
+        // Update last transaction for toast
+        setLastTransaction({
+            wallet: debugTransaction.wallet,
+            sol: debugTransaction.sol,
+            teamId: debugTransaction.teamId,
+            isSell: debugTransaction.isSell,
+            timestamp: Date.now()
         })
-
-        const newMonkeyCount = worldRef.current.monkeys.length
-        console.log(
-            `🎯 [DEBUG] After spawn: ${newMonkeyCount} ${monkeyType} monkeys (added ${newMonkeyCount - oldMonkeyCount})`
-        )
 
         setForceUpdate((prev) => prev + 1) // Force React re-render for scoreboard
     }
@@ -393,9 +336,8 @@ const GameCanvas = ({
         const now = nowMs
         const oldMonkeyCount = worldRef.current.monkeys.length
 
-        // Check if fighting should be enabled (not expired and countdown is active)
-        const countdown = getCountdownTime()
-        const fightingEnabled = !countdown.isExpired
+        // Fighting is always enabled in the new system
+        const fightingEnabled = true
 
         worldRef.current = stepWorld({
             world: worldRef.current,
@@ -413,121 +355,54 @@ const GameCanvas = ({
         }
     })
 
-    const countdown = getCountdownTime()
+    // Update parent component with team stats whenever they change
+    useEffect(() => {
+        if (onTeamStatsUpdate) {
+            const teams = Array.from(worldRef.current.teamStats.values())
+            onTeamStatsUpdate(teams)
+        }
+    }, [forceUpdate, onTeamStatsUpdate])
+
+    // Auto-hide toast after 5 seconds
+    useEffect(() => {
+        if (lastTransaction) {
+            const timer = setTimeout(() => {
+                setLastTransaction(null)
+            }, 5000) // Hide after 5 seconds
+
+            return () => clearTimeout(timer)
+        }
+    }, [lastTransaction])
+
+    const spawnTimer = getNextSpawnTime()
 
     return (
         <div className="flex flex-col gap-4" style={{ position: "relative" }}>
             {/* CSS Animations */}
             <style>
                 {`
-                @keyframes waveGoldGradient {
-                    0% {
-                        background-position: -200% center;
-                    }
-                    100% {
-                        background-position: 200% center;
-                    }
-                }
-                .wave-gold-text {
-                    background: linear-gradient(
-                        90deg,
-                        #fbbf24 0%,
-                        #f59e0b 25%,
-                        #fcd34d 50%,
-                        #f59e0b 75%,
-                        #fbbf24 100%
-                    );
-                    background-size: 200% 100%;
-                    background-clip: text;
-                    -webkit-background-clip: text;
-                    -webkit-text-fill-color: transparent;
-                    animation: waveGoldGradient 3s ease-in-out infinite;
-                }
-                @keyframes glowingGold {
+                @keyframes glowingTeam {
                     0%, 100% {
                         box-shadow: 
                             0 0 5px rgba(255, 215, 0, 0.3),
-                            0 0 10px rgba(255, 215, 0, 0.2),
-                            0 0 15px rgba(255, 215, 0, 0.1),
-                            0 0 20px rgba(255, 215, 0, 0.1);
+                            0 0 10px rgba(255, 215, 0, 0.2);
                     }
                     50% {
                         box-shadow: 
                             0 0 10px rgba(255, 215, 0, 0.6),
-                            0 0 20px rgba(255, 215, 0, 0.4),
-                            0 0 30px rgba(255, 215, 0, 0.3),
-                            0 0 40px rgba(255, 215, 0, 0.2);
+                            0 0 20px rgba(255, 215, 0, 0.4);
                     }
                 }
                 .king-glow {
-                    animation: glowingGold 2s ease-in-out infinite;
+                    animation: glowingTeam 2s ease-in-out infinite;
                 }
                 `}
             </style>
 
-            {/* React Confetti */}
-            {showConfetti && (
-                <div className="fixed inset-0 pointer-events-none z-[3000]">
-                    <Confetti
-                        width={window.innerWidth}
-                        height={window.innerHeight}
-                        recycle={true}
-                        numberOfPieces={200}
-                        gravity={0.3}
-                    />
+            <div className="absolute z-100 -top-8 left-12 flex flex-row items-center justify-center">
+                <div className="text-sm font-bold text-green-400">
+                    Next spawn: {formatSpawnTimer(spawnTimer.remaining)}
                 </div>
-            )}
-
-            {/* Winner Modal */}
-            {showWinnerModal && winner && (
-                <div
-                    className="fixed inset-0 bg-black/80 z-[2000] flex items-center justify-center"
-                    onClick={handleReset}
-                >
-                    <div
-                        className="bg-gray-800 p-8 rounded-2xl border-2 border-yellow-400 text-center text-white min-w-[400px]"
-                        style={{ boxShadow: "0 0 40px rgba(255, 215, 0, 0.5)" }}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className="text-5xl mb-4">👑</div>
-                        <h2 className="text-3xl text-yellow-400 mb-4 font-bold">VICTORY!</h2>
-                        <div className="text-xl mb-6 flex items-center justify-center gap-3">
-                            <div className="w-6 h-6 rounded-full" style={{ backgroundColor: winner.color }} />
-                            <span className="font-mono">{winner.wallet.slice(0, 16)}...</span>
-                        </div>
-                        <div className="text-base mb-6 text-gray-300 space-y-1">
-                            <div>
-                                🐵 Alive: {winner.alive} | 💀 Dead: {winner.dead}
-                            </div>
-                            <div>
-                                ⚔️ Kills: {winner.kills} | 🏦 Reserves: {winner.reserves}
-                            </div>
-                        </div>
-                        <div className="text-2xl text-yellow-400 font-bold mb-4">🏆 Reward: {REWARD_SOL} SOL 🏆</div>
-                        <button
-                            onClick={handleReset}
-                            className="px-6 py-3 bg-yellow-400 text-black border-none rounded-lg text-base font-bold cursor-pointer hover:bg-yellow-500 transition-colors"
-                        >
-                            Start New Battle
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            <div className="flex flex-row gap-2 items-center justify-center mb-6 -ml-64">
-                <div className="text-4xl font-bold wave-gold-text">{REWARD_SOL} SOL Reward</div>
-                {countdownActive ? (
-                    <>
-                        <div className="text-4xl font-bold">to the King in</div>
-                        <div
-                            className={`text-4xl font-mono ${countdown.isExpired ? "text-red-500" : "text-green-400"}`}
-                        >
-                            {countdown.isExpired ? "BATTLE ENDED!" : formatCountdown(countdown.remaining)}
-                        </div>
-                    </>
-                ) : (
-                    <div className="text-4xl font-bold text-gray-400">awaiting first king...</div>
-                )}
             </div>
             <div className="flex w-full gap-4 justify-center">
                 <div className="flex flex-col gap-2">
@@ -537,7 +412,7 @@ const GameCanvas = ({
                                 onClick={spawnRandomMonkeys}
                                 className="px-4 py-2 bg-blue-500 text-white border-none rounded cursor-pointer hover:bg-blue-600"
                             >
-                                Spawn Random Monkey
+                                Add SOL to Random Team
                             </button>
                             <button
                                 onClick={() => {
@@ -571,54 +446,135 @@ const GameCanvas = ({
                     </h3>
 
                     <div style={{ maxHeight: height - 100 }} key={forceUpdate}>
-                        {Array.from(worldRef.current.teamStats.values())
-                            .sort((a, b) => {
-                                // Sort by king status first, then by kills
-                                const kingWallet = getCurrentKing()?.wallet
-                                const aIsKing = a.wallet === kingWallet
-                                const bIsKing = b.wallet === kingWallet
+                        {(() => {
+                            // Create all possible teams 0-9, merging with existing stats
+                            const allTeams = []
+                            for (let i = 0; i <= 9; i++) {
+                                const teamId = i.toString()
+                                const existingStats = worldRef.current.teamStats.get(teamId)
 
-                                if (aIsKing && !bIsKing) return -1
-                                if (!aIsKing && bIsKing) return 1
-                                return b.kills - a.kills
-                            })
-                            .map((stats) => {
-                                const kingWallet = getCurrentKing()?.wallet
-                                const isKing = stats.wallet === kingWallet
-                                return (
-                                    <div
-                                        key={stats.wallet}
-                                        className={`flex flex-col gap-1 p-3 mb-2 rounded-md relative ${
-                                            isKing ? "bg-gray-800 border border-yellow-400/30 king-glow" : "bg-gray-700"
-                                        }`}
-                                        style={{
-                                            borderLeft: `4px solid ${stats.color}`
-                                        }}
-                                    >
-                                        <div className="flex items-center gap-2 text-xs font-bold">
-                                            {isKing && <span className="text-sm">👑</span>}
-                                            <div
-                                                className="w-3 h-3 rounded-full"
-                                                style={{ backgroundColor: stats.color }}
-                                            />
-                                            <span className={isKing ? "text-yellow-400" : "text-white"}>
-                                                {stats.wallet.slice(0, 12)}...
-                                            </span>
+                                if (existingStats) {
+                                    allTeams.push(existingStats)
+                                } else {
+                                    // Create placeholder stats for teams without transactions
+                                    allTeams.push({
+                                        teamId,
+                                        color: getTeamColor(teamId),
+                                        totalSol: 0,
+                                        spawned: 0,
+                                        alive: 0,
+                                        dead: 0,
+                                        kills: 0,
+                                        reserves: 0,
+                                        monkeyType: MonkeyType.SMALL,
+                                        fundingWallets: new Map()
+                                    })
+                                }
+                            }
+
+                            // Sort by activity first (teams with activity on top), then by king status, kills, SOL
+                            return allTeams
+                                .sort((a, b) => {
+                                    const kingTeam = getCurrentKing()?.teamId
+                                    const aIsKing = a.teamId === kingTeam
+                                    const bIsKing = b.teamId === kingTeam
+                                    const aHasActivity = a.totalSol > 0 || a.spawned > 0
+                                    const bHasActivity = b.totalSol > 0 || b.spawned > 0
+
+                                    // Teams with activity first
+                                    if (aHasActivity && !bHasActivity) return -1
+                                    if (!aHasActivity && bHasActivity) return 1
+
+                                    // Within same activity level, sort by king status, kills, SOL
+                                    if (aIsKing && !bIsKing) return -1
+                                    if (!aIsKing && bIsKing) return 1
+                                    if (b.kills !== a.kills) return b.kills - a.kills
+                                    if (b.totalSol !== a.totalSol) return b.totalSol - a.totalSol
+
+                                    // Finally sort by team ID for consistent ordering
+                                    return parseInt(a.teamId) - parseInt(b.teamId)
+                                })
+                                .map((stats) => {
+                                    const kingTeam = getCurrentKing()?.teamId
+                                    const isKing = stats.teamId === kingTeam
+                                    const teamPool = worldRef.current.teamPools.get(stats.teamId)
+                                    const fundersCount = teamPool?.fundingWallets.size || 0
+                                    const hasActivity = stats.totalSol > 0 || stats.spawned > 0
+
+                                    return (
+                                        <div
+                                            key={stats.teamId}
+                                            className={`flex flex-col gap-1 p-3 mb-2 rounded-md relative ${
+                                                isKing
+                                                    ? "bg-gray-800 border border-yellow-400/30 king-glow"
+                                                    : hasActivity
+                                                    ? "bg-gray-700"
+                                                    : "bg-gray-800/50"
+                                            }`}
+                                            style={{
+                                                borderLeft: `4px solid ${stats.color}`,
+                                                opacity: hasActivity ? 1 : 0.6
+                                            }}
+                                        >
+                                            <div className="flex items-center gap-2 text-xs font-bold">
+                                                {isKing && <span className="text-sm">👑</span>}
+                                                <span className="text-sm">{getTeamFlag(stats.teamId)}</span>
+
+                                                <span
+                                                    className={
+                                                        isKing
+                                                            ? "text-yellow-400"
+                                                            : hasActivity
+                                                            ? "text-white"
+                                                            : "text-gray-400"
+                                                    }
+                                                >
+                                                    Team {stats.teamId}
+                                                </span>
+                                                {!hasActivity && (
+                                                    <span className="text-xs text-gray-500 ml-2">
+                                                        (waiting for funding)
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="text-xs text-gray-300 text-left">
+                                                💰 {stats.totalSol.toFixed(4)} SOL | 👥 {fundersCount} funders
+                                            </div>
+                                            <div className="text-xs text-gray-300 text-left">
+                                                🐵 {stats.alive} | 💀 {stats.dead} | ⚔️ {stats.kills} | 🏦{" "}
+                                                {stats.reserves}
+                                            </div>
                                         </div>
-                                        <div className="text-xs text-gray-300 text-left">
-                                            🐵 {stats.alive} | 💀 {stats.dead} | ⚔️ {stats.kills} | 🏦 {stats.reserves}
-                                        </div>
-                                    </div>
-                                )
-                            })}
-                        {worldRef.current.teamStats.size === 0 && (
-                            <div className="text-xs text-gray-400 text-center mt-8">
-                                No teams yet. {debugMode ? "Spawn some monkeys!" : "Waiting for token purchases..."}
-                            </div>
-                        )}
+                                    )
+                                })
+                        })()}
                     </div>
                 </div>
             </div>
+
+            {/* Transaction Toast */}
+            {lastTransaction && (
+                <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50">
+                    <div
+                        className="bg-gray-800 border border-gray-600 rounded-lg px-4 py-3 shadow-lg flex items-center gap-3 animate-pulse"
+                        style={{
+                            borderLeftColor: getTeamColor(lastTransaction.teamId),
+                            borderLeftWidth: "4px"
+                        }}
+                    >
+                        <span className="text-2xl">{getTeamFlag(lastTransaction.teamId)}</span>
+                        <div className="text-white">
+                            <span className="font-mono text-sm text-gray-300">
+                                {lastTransaction.wallet.slice(0, 5)}...
+                            </span>
+                            <span className="mx-2">{lastTransaction.isSell ? "💸" : "💰"}</span>
+                            <span className="font-bold text-green-400">{lastTransaction.sol.toFixed(3)} SOL</span>
+                            <span className="mx-2">→</span>
+                            <span className="font-bold text-white">Team {lastTransaction.teamId}</span>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

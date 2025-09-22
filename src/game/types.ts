@@ -15,8 +15,8 @@ export type MonkeyType = (typeof MonkeyType)[keyof typeof MonkeyType]
 
 export type Monkey = {
     id: string
-    wallet: string
-    team: Team
+    teamId: string // Team digit (0-9)
+    sourceWallet?: string // Optional: wallet that funded this monkey
     monkeyType: MonkeyType
     position: Vector2
     velocity: Vector2
@@ -39,6 +39,22 @@ export type BuyEvent = {
     wallet: string
     lamports: number
     sol: number
+    ts: number
+    isSell?: boolean
+}
+
+export type TeamPool = {
+    teamId: string // Team digit (0-9)
+    totalSol: number
+    fundingWallets: Map<string, number> // wallet -> SOL contributed
+}
+
+export type TransactionEvent = {
+    signature: string
+    wallet: string
+    sol: number
+    isSell: boolean
+    teamId: string
     ts: number
 }
 
@@ -68,20 +84,22 @@ export type GameConfig = {
 }
 
 export type TeamStats = {
-    wallet: string
-    team: Team
+    teamId: string // Team digit (0-9)
     color: string
+    totalSol: number
     spawned: number
     alive: number
     dead: number
     kills: number
     reserves: number
     monkeyType: MonkeyType
+    fundingWallets: Map<string, number> // wallet -> SOL contributed
 }
 
 export type World = {
     monkeys: Monkey[]
-    teamStats: Map<string, TeamStats>
+    teamStats: Map<string, TeamStats> // teamId -> TeamStats
+    teamPools: Map<string, TeamPool> // teamId -> TeamPool
     bananas: Banana[]
 }
 
