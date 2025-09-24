@@ -1,4 +1,4 @@
-import type { GameConfig, Monkey, Vector2, World, Banana, TransactionEvent } from "./types"
+import type { GameConfig, Monkey, Vector2, World, Banana, TransactionEvent, WalletContribution } from "./types"
 import { MonkeyType } from "./types"
 
 // Base monkey stats
@@ -226,7 +226,8 @@ export const createWorld = (): World => ({
     monkeys: [],
     teamStats: new Map(),
     teamPools: new Map(),
-    bananas: []
+    bananas: [],
+    walletContributions: new Map()
 })
 
 const clamp = (value: number, min: number, max: number): number => {
@@ -328,77 +329,138 @@ export const getTeamCountry = (teamId: string): string => {
     return countries[index]
 }
 
+// Helper function to add a wallet contribution to the tracking system
+const addWalletContribution = (
+    walletContributions: Map<string, WalletContribution[]>,
+    wallet: string,
+    teamId: string,
+    amount: number,
+    timestamp: number
+): void => {
+    const contributions = walletContributions.get(wallet) || []
+    contributions.push({ teamId, amount, timestamp })
+    walletContributions.set(wallet, contributions)
+}
+
+// Helper function to remove SOL from wallet contributions using LIFO
+const removeWalletContribution = (
+    walletContributions: Map<string, WalletContribution[]>,
+    wallet: string,
+    amountToRemove: number
+): { teamId: string; amount: number }[] => {
+    const contributions = walletContributions.get(wallet) || []
+    const removals: { teamId: string; amount: number }[] = []
+    let remainingToRemove = amountToRemove
+
+    // Sort by timestamp descending (newest first - LIFO)
+    contributions.sort((a, b) => b.timestamp - a.timestamp)
+
+    // Remove from newest contributions first
+    for (let i = 0; i < contributions.length && remainingToRemove > 0; i++) {
+        const contribution = contributions[i]
+        const amountFromThisContribution = Math.min(contribution.amount, remainingToRemove)
+
+        if (amountFromThisContribution > 0) {
+            removals.push({ teamId: contribution.teamId, amount: amountFromThisContribution })
+            contribution.amount -= amountFromThisContribution
+            remainingToRemove -= amountFromThisContribution
+        }
+    }
+
+    // Filter out contributions with 0 amount
+    const updatedContributions = contributions.filter((c) => c.amount > 0)
+
+    if (updatedContributions.length === 0) {
+        walletContributions.delete(wallet)
+    } else {
+        walletContributions.set(wallet, updatedContributions)
+    }
+
+    return removals
+}
+
 // Process a transaction and update team pools
 export const processTransaction = (world: World, transaction: TransactionEvent): World => {
     const newTeamPools = new Map(world.teamPools)
     const newTeamStats = new Map(world.teamStats)
-
-    // Get or create team pool
-    let teamPool = newTeamPools.get(transaction.teamId)
-    if (!teamPool) {
-        teamPool = {
-            teamId: transaction.teamId,
-            totalSol: 0,
-            fundingWallets: new Map()
-        }
-        newTeamPools.set(transaction.teamId, teamPool)
-    }
-
-    // Get or create team stats
-    let teamStats = newTeamStats.get(transaction.teamId)
-    if (!teamStats) {
-        teamStats = {
-            teamId: transaction.teamId,
-            color: getTeamColor(transaction.teamId),
-            totalSol: 0,
-            spawned: 0,
-            alive: 0,
-            dead: 0,
-            kills: 0,
-            reserves: 0,
-            monkeyType: MonkeyType.SMALL,
-            fundingWallets: new Map()
-        }
-        newTeamStats.set(transaction.teamId, teamStats)
-    }
+    const newWalletContributions = new Map(world.walletContributions)
 
     if (transaction.isSell) {
-        // Handle sell transaction - remove SOL from pool
-        const currentContribution = teamPool.fundingWallets.get(transaction.wallet) || 0
+        // Handle sell transaction - remove SOL from multiple pools using LIFO
+        const removals = removeWalletContribution(newWalletContributions, transaction.wallet, transaction.sol)
 
-        if (currentContribution > 0) {
-            const amountToRemove = Math.min(transaction.sol, currentContribution)
-
-            // Update team pool
-            teamPool.totalSol = Math.max(0, teamPool.totalSol - amountToRemove)
-            const newContribution = currentContribution - amountToRemove
-
-            if (newContribution <= 0) {
-                teamPool.fundingWallets.delete(transaction.wallet)
-                teamStats.fundingWallets.delete(transaction.wallet)
-            } else {
-                teamPool.fundingWallets.set(transaction.wallet, newContribution)
-                teamStats.fundingWallets.set(transaction.wallet, newContribution)
-            }
-
-            // Update team stats
-            teamStats.totalSol = teamPool.totalSol
-
-            console.log(
-                `💸 Sell: Team ${transaction.teamId} lost ${amountToRemove.toFixed(4)} SOL (${transaction.wallet.slice(
-                    0,
-                    8
-                )}...). Pool now: ${teamPool.totalSol.toFixed(4)} SOL`
-            )
+        if (removals.length === 0) {
+            console.log(`⚠️ Sell ignored: Wallet ${transaction.wallet.slice(0, 8)}... has no contributions to any team`)
         } else {
             console.log(
-                `⚠️ Sell ignored: Wallet ${transaction.wallet.slice(0, 8)}... has no contribution to team ${
-                    transaction.teamId
-                }`
+                `💸 Sell: Wallet ${transaction.wallet.slice(0, 8)}... selling ${transaction.sol.toFixed(
+                    4
+                )} SOL across ${removals.length} team(s)`
             )
+
+            // Update each affected team pool
+            for (const removal of removals) {
+                const teamPool = newTeamPools.get(removal.teamId)
+                const teamStats = newTeamStats.get(removal.teamId)
+
+                if (teamPool && teamStats) {
+                    // Update team pool
+                    teamPool.totalSol = Math.max(0, teamPool.totalSol - removal.amount)
+
+                    // Update funding wallets in team pool
+                    const currentPoolContribution = teamPool.fundingWallets.get(transaction.wallet) || 0
+                    const newPoolContribution = Math.max(0, currentPoolContribution - removal.amount)
+
+                    if (newPoolContribution <= 0) {
+                        teamPool.fundingWallets.delete(transaction.wallet)
+                        teamStats.fundingWallets.delete(transaction.wallet)
+                    } else {
+                        teamPool.fundingWallets.set(transaction.wallet, newPoolContribution)
+                        teamStats.fundingWallets.set(transaction.wallet, newPoolContribution)
+                    }
+
+                    // Update team stats
+                    teamStats.totalSol = teamPool.totalSol
+
+                    console.log(
+                        `   📉 Team ${removal.teamId}: -${removal.amount.toFixed(
+                            4
+                        )} SOL, pool now: ${teamPool.totalSol.toFixed(4)} SOL`
+                    )
+                }
+            }
         }
     } else {
         // Handle buy transaction - add SOL to pool
+        // Get or create team pool
+        let teamPool = newTeamPools.get(transaction.teamId)
+        if (!teamPool) {
+            teamPool = {
+                teamId: transaction.teamId,
+                totalSol: 0,
+                fundingWallets: new Map()
+            }
+            newTeamPools.set(transaction.teamId, teamPool)
+        }
+
+        // Get or create team stats
+        let teamStats = newTeamStats.get(transaction.teamId)
+        if (!teamStats) {
+            teamStats = {
+                teamId: transaction.teamId,
+                color: getTeamColor(transaction.teamId),
+                totalSol: 0,
+                spawned: 0,
+                alive: 0,
+                dead: 0,
+                kills: 0,
+                reserves: 0,
+                monkeyType: MonkeyType.SMALL,
+                fundingWallets: new Map()
+            }
+            newTeamStats.set(transaction.teamId, teamStats)
+        }
+
         const currentContribution = teamPool.fundingWallets.get(transaction.wallet) || 0
         const newContribution = currentContribution + transaction.sol
 
@@ -409,6 +471,15 @@ export const processTransaction = (world: World, transaction: TransactionEvent):
         // Update team stats
         teamStats.totalSol = teamPool.totalSol
         teamStats.fundingWallets.set(transaction.wallet, newContribution)
+
+        // Add to wallet contribution tracking
+        addWalletContribution(
+            newWalletContributions,
+            transaction.wallet,
+            transaction.teamId,
+            transaction.sol,
+            transaction.ts
+        )
 
         console.log(
             `💰 Buy: Team ${transaction.teamId} gained ${transaction.sol.toFixed(4)} SOL (${transaction.wallet.slice(
@@ -421,7 +492,8 @@ export const processTransaction = (world: World, transaction: TransactionEvent):
     return {
         ...world,
         teamPools: newTeamPools,
-        teamStats: newTeamStats
+        teamStats: newTeamStats,
+        walletContributions: newWalletContributions
     }
 }
 
@@ -482,7 +554,8 @@ export const spawnMonkeys = ({
             monkeys: world.monkeys,
             teamStats: newTeamStats,
             teamPools: world.teamPools,
-            bananas: world.bananas
+            bananas: world.bananas,
+            walletContributions: world.walletContributions
         }
     }
 
@@ -527,7 +600,8 @@ export const spawnMonkeys = ({
         monkeys: [...world.monkeys, ...newMonkeys],
         teamStats: newTeamStats,
         teamPools: world.teamPools,
-        bananas: world.bananas
+        bananas: world.bananas,
+        walletContributions: world.walletContributions
     }
 }
 
@@ -599,7 +673,8 @@ const spawnFromReserves = (world: World, config: GameConfig): World => {
         monkeys: [...world.monkeys, ...newMonkeys],
         teamStats: newTeamStats,
         teamPools: world.teamPools,
-        bananas: world.bananas
+        bananas: world.bananas,
+        walletContributions: world.walletContributions
     }
 }
 
@@ -882,7 +957,8 @@ export const stepWorld = ({
         monkeys: alive,
         teamStats: updatedTeamStats,
         teamPools: world.teamPools,
-        bananas: world.bananas
+        bananas: world.bananas,
+        walletContributions: world.walletContributions
     }
 
     // Spawn from reserves if monkeys died and there's space

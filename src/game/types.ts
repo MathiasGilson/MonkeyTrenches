@@ -98,11 +98,18 @@ export type TeamStats = {
     fundingWallets: Map<string, number> // wallet -> SOL contributed
 }
 
+export type WalletContribution = {
+    teamId: string
+    amount: number
+    timestamp: number // For LIFO ordering
+}
+
 export type World = {
     monkeys: Monkey[]
     teamStats: Map<string, TeamStats> // teamId -> TeamStats
     teamPools: Map<string, TeamPool> // teamId -> TeamPool
     bananas: Banana[]
+    walletContributions: Map<string, WalletContribution[]> // wallet -> contributions (ordered by timestamp)
 }
 
 export const SOL_PER_LAMPORT = 1_000_000_000

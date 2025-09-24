@@ -64,6 +64,9 @@ type BirdeyeApiResponse = {
 
 const SOL_MINT = "So11111111111111111111111111111111111111112"
 
+// Pump.fun takes a 1% fee on transactions
+const PUMP_FUN_FEE_RATE = 0.01
+
 const fetchTokenTransactions = async (tokenMint: string, offset: number = 0): Promise<BirdeyeApiResponse> => {
     const params = new URLSearchParams({
         address: tokenMint,
@@ -147,14 +150,17 @@ const extractTransactionData = (
 }
 
 const getTeamIdFromSolAmount = (solAmount: number): string => {
-    // Round up to nearest 0.01 to account for fees, then use 2nd decimal digit
-    // Examples:
-    // 0.00932 -> 0.01 -> team 1
-    // 0.08923 -> 0.09 -> team 9
-    // 0.0982 -> 0.10 -> team 0
-    // 0.009 -> 0.01 -> team 1 (user intended 0.01 but fees reduced it)
+    // Add back the 1% pump.fun fee to get the original intended amount
+    // Example: if user received 1 SOL after fees, they originally intended ~1.0101 SOL
+    // The fee calculation: originalAmount = receivedAmount / (1 - feeRate)
+    const originalIntendedAmount = solAmount / (1 - PUMP_FUN_FEE_RATE)
 
-    const roundedAmount = Math.ceil(solAmount * 100) / 100 // Round up to nearest 0.01
+    // Round up to nearest 0.01 to handle any remaining precision issues
+    // Examples:
+    // 0.99 SOL (after fee) -> 1.00 SOL (intended) -> team 0
+    // 0.0891 SOL (after fee) -> 0.09 SOL (intended) -> team 9
+    // 0.0099 SOL (after fee) -> 0.01 SOL (intended) -> team 1
+    const roundedAmount = Math.ceil(originalIntendedAmount * 100) / 100
     const secondDecimalDigit = Math.floor((roundedAmount * 100) % 10)
 
     return secondDecimalDigit.toString()
@@ -240,8 +246,11 @@ export const createPumpPoller = ({ tokenMint, pollIntervalMs = DEFAULT_INTERVAL 
                             teamId,
                             side: tx.side,
                             source: tx.source,
-                            // Team assignment logic
-                            teamLogic: `${transactionData.sol.toFixed(4)} -> ${roundedSol.toFixed(2)} -> team ${teamId}`
+                            // Team assignment logic with fee adjustment
+                            teamLogic: `${transactionData.sol.toFixed(4)} (after fees) -> ${(
+                                transactionData.sol /
+                                (1 - PUMP_FUN_FEE_RATE)
+                            ).toFixed(4)} (original) -> team ${teamId}`
                         })
 
                         onTransaction(event)
