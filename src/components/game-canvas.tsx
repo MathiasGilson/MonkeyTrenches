@@ -9,6 +9,7 @@ import {
     spawnMonkeysFromPools,
     getTeamFlag,
     getTeamColor,
+    getTeamCountry,
     getTeamIdFromSolAmount,
     MONKEY_COSTS
 } from "../game/engine"
@@ -23,6 +24,8 @@ export type GameCanvasProps = {
     tokenMint: string
     debugMode?: boolean
     onTeamStatsUpdate?: (teams: TeamStats[]) => void
+    customCountries?: Map<string, string>
+    customFlags?: Map<string, string>
 }
 
 const DEFAULT_WIDTH = 1100
@@ -159,7 +162,9 @@ const GameCanvas = ({
     height = DEFAULT_HEIGHT,
     tokenMint,
     debugMode = false,
-    onTeamStatsUpdate
+    onTeamStatsUpdate,
+    customCountries = new Map(),
+    customFlags = new Map()
 }: GameCanvasProps): ReactElement => {
     const canvasRef = useRef<HTMLCanvasElement | null>(null)
     const worldRef = useRef<World>(createWorld())
@@ -227,14 +232,16 @@ const GameCanvas = ({
             // Process the transaction and update team pools
             worldRef.current = processTransaction(worldRef.current, transaction)
 
-            // Update last transaction for toast
-            setLastTransaction({
-                wallet: transaction.wallet,
-                sol: transaction.sol,
-                teamId: transaction.teamId,
-                isSell: transaction.isSell,
-                timestamp: Date.now()
-            })
+            // Update last transaction for toast (only for buy transactions)
+            if (!transaction.isSell) {
+                setLastTransaction({
+                    wallet: transaction.wallet,
+                    sol: transaction.sol,
+                    teamId: transaction.teamId,
+                    isSell: transaction.isSell,
+                    timestamp: Date.now()
+                })
+            }
 
             setForceUpdate((prev) => prev + 1) // Force React re-render for scoreboard
         })
@@ -283,6 +290,15 @@ const GameCanvas = ({
         return teamsWithAliveMonkeys.reduce((king, team) => (team.kills > king.kills ? team : king))
     }
 
+    // Helper functions to get custom or default values
+    const getDisplayCountry = (teamId: string): string => {
+        return customCountries.get(teamId) || getTeamCountry(teamId)
+    }
+
+    const getDisplayFlag = (teamId: string): string => {
+        return customFlags.get(teamId) || getTeamFlag(teamId)
+    }
+
     // Debug spawn function
     const spawnRandomMonkeys = (): void => {
         // Generate a SOL amount that will target a specific team
@@ -314,17 +330,78 @@ const GameCanvas = ({
             ts: Date.now()
         }
 
-        console.log(`🐵 [DEBUG] Adding ${solAmount.toFixed(3)} SOL to team ${teamId} ${getTeamFlag(teamId)}`)
+        console.log(`🐵 [DEBUG] Adding ${solAmount.toFixed(3)} SOL to team ${teamId} ${getDisplayFlag(teamId)}`)
         worldRef.current = processTransaction(worldRef.current, debugTransaction)
 
-        // Update last transaction for toast
-        setLastTransaction({
-            wallet: debugTransaction.wallet,
-            sol: debugTransaction.sol,
-            teamId: debugTransaction.teamId,
-            isSell: debugTransaction.isSell,
-            timestamp: Date.now()
-        })
+        // Update last transaction for toast (only for buy transactions)
+        if (!debugTransaction.isSell) {
+            setLastTransaction({
+                wallet: debugTransaction.wallet,
+                sol: debugTransaction.sol,
+                teamId: debugTransaction.teamId,
+                isSell: debugTransaction.isSell,
+                timestamp: Date.now()
+            })
+        }
+
+        setForceUpdate((prev) => prev + 1) // Force React re-render for scoreboard
+    }
+
+    // Debug function to remove SOL from random team (simulate sell)
+    const removeRandomSol = (): void => {
+        // Get teams that have SOL to remove from
+        const teamsWithSol = Array.from(worldRef.current.teamPools.entries()).filter(([, pool]) => pool.totalSol > 0)
+
+        if (teamsWithSol.length === 0) {
+            console.log(`💸 [DEBUG] No teams with SOL to remove from`)
+            return
+        }
+
+        // Pick a random team with SOL
+        const randomTeamIndex = Math.floor(Math.random() * teamsWithSol.length)
+        const [teamId, teamPool] = teamsWithSol[randomTeamIndex]
+
+        // Get a random wallet from this team's funders
+        const fundingWallets = Array.from(teamPool.fundingWallets.entries())
+        if (fundingWallets.length === 0) {
+            console.log(`💸 [DEBUG] Team ${teamId} has no funding wallets`)
+            return
+        }
+
+        const randomWalletIndex = Math.floor(Math.random() * fundingWallets.length)
+        const [wallet, walletContribution] = fundingWallets[randomWalletIndex]
+
+        // Generate a random sell amount (10% to 50% of their contribution)
+        const sellPercentage = 0.1 + Math.random() * 0.4 // 10% to 50%
+        const sellAmount = Math.min(walletContribution, walletContribution * sellPercentage)
+        const roundedSellAmount = parseFloat(sellAmount.toFixed(4))
+
+        const debugTransaction = {
+            signature: `debug_sell_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            wallet,
+            sol: roundedSellAmount,
+            isSell: true,
+            teamId,
+            ts: Date.now()
+        }
+
+        console.log(
+            `💸 [DEBUG] Removing ${roundedSellAmount.toFixed(4)} SOL from team ${teamId} ${getDisplayFlag(
+                teamId
+            )} (wallet: ${wallet.slice(0, 8)}...)`
+        )
+        worldRef.current = processTransaction(worldRef.current, debugTransaction)
+
+        // Update last transaction for toast (only for buy transactions)
+        if (!debugTransaction.isSell) {
+            setLastTransaction({
+                wallet: debugTransaction.wallet,
+                sol: debugTransaction.sol,
+                teamId: debugTransaction.teamId,
+                isSell: debugTransaction.isSell,
+                timestamp: Date.now()
+            })
+        }
 
         setForceUpdate((prev) => prev + 1) // Force React re-render for scoreboard
     }
@@ -346,7 +423,7 @@ const GameCanvas = ({
             config: configRef.current,
             fightingEnabled
         })
-        renderWorld(ctx, worldRef.current, configRef.current)
+        renderWorld(ctx, worldRef.current, configRef.current, customFlags)
         drawDebugStats(ctx, worldRef.current)
 
         // Update scoreboard when monkeys die
@@ -413,6 +490,12 @@ const GameCanvas = ({
                                 className="px-4 py-2 bg-blue-500 text-white border-none rounded cursor-pointer hover:bg-blue-600"
                             >
                                 Add SOL to Random Team
+                            </button>
+                            <button
+                                onClick={removeRandomSol}
+                                className="px-4 py-2 bg-orange-500 text-white border-none rounded cursor-pointer hover:bg-orange-600"
+                            >
+                                Remove SOL from Random Team
                             </button>
                             <button
                                 onClick={() => {
@@ -518,7 +601,7 @@ const GameCanvas = ({
                                         >
                                             <div className="flex items-center gap-2 text-xs font-bold">
                                                 {isKing && <span className="text-sm">👑</span>}
-                                                <span className="text-sm">{getTeamFlag(stats.teamId)}</span>
+                                                <span className="text-sm">{getDisplayFlag(stats.teamId)}</span>
 
                                                 <span
                                                     className={
@@ -529,7 +612,7 @@ const GameCanvas = ({
                                                             : "text-gray-400"
                                                     }
                                                 >
-                                                    Team {stats.teamId}
+                                                    Team {stats.teamId} - {getDisplayCountry(stats.teamId)}
                                                 </span>
                                                 {!hasActivity && (
                                                     <span className="text-xs text-gray-500 ml-2">
@@ -562,7 +645,7 @@ const GameCanvas = ({
                             borderLeftWidth: "4px"
                         }}
                     >
-                        <span className="text-2xl">{getTeamFlag(lastTransaction.teamId)}</span>
+                        <span className="text-2xl">{getDisplayFlag(lastTransaction.teamId)}</span>
                         <div className="text-white">
                             <span className="font-mono text-sm text-gray-300">
                                 {lastTransaction.wallet.slice(0, 5)}...

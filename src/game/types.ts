@@ -32,6 +32,8 @@ export type Monkey = {
     isFighting: boolean
     facingLeft: boolean
     collisionRadius: number
+    speedMultiplier: number // Random multiplier for walking speed (0.95 - 1.05)
+    damageMultiplier: number // Random multiplier for attack damage (0.95 - 1.05)
 }
 
 export type BuyEvent = {

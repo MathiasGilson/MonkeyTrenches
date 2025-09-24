@@ -84,7 +84,7 @@ const drawRoundedRect = (
     ctx.closePath()
 }
 
-const drawMonkey = (ctx: CanvasRenderingContext2D, m: Monkey): void => {
+const drawMonkey = (ctx: CanvasRenderingContext2D, m: Monkey, customFlags?: Map<string, string>): void => {
     const stats = getMonkeyStats(m.monkeyType)
     const size = stats.size
     const x = m.position.x - size / 2
@@ -124,11 +124,28 @@ const drawMonkey = (ctx: CanvasRenderingContext2D, m: Monkey): void => {
     const flagSize = Math.max(12, size * 0.25) // Scale flag with monkey size
     const flagY = y - 15 - flagSize / 2 // Position above health bar
 
-    // Draw flag emoji
+    // Draw flag emoji with black background rectangle
     ctx.font = `${flagSize}px Arial`
     ctx.textAlign = "center"
     ctx.textBaseline = "middle"
-    ctx.fillText(getTeamFlag(m.teamId), m.position.x, flagY + flagSize / 2)
+
+    const flagText = customFlags?.get(m.teamId) || getTeamFlag(m.teamId)
+    const flagX = m.position.x
+    const flagYPos = flagY + flagSize / 2
+
+    // Draw semi-transparent black rectangle behind flag
+    const rectWidth = flagSize + 4 // Add some padding
+    const rectHeight = flagSize
+    const rectX = flagX - rectWidth / 2
+    const rectY = flagYPos - rectHeight / 2 - 2
+
+    ctx.fillStyle = "rgba(0, 0, 0, 0.5)"
+    drawRoundedRect(ctx, rectX, rectY, rectWidth, rectHeight, 2)
+    ctx.fill()
+
+    // Draw the flag emoji on top
+    ctx.fillStyle = "#ffffff"
+    ctx.fillText(flagText, flagX, flagYPos)
 
     // Multi-bar health system (horizontal layout)
     const totalBars = stats.healthBars
@@ -158,7 +175,7 @@ const drawMonkey = (ctx: CanvasRenderingContext2D, m: Monkey): void => {
 
         // Draw bar background (dark)
         ctx.fillStyle = "#1f2937"
-        drawRoundedRect(ctx, barX, barY, individualBarWidth, barHeight, 2)
+        drawRoundedRect(ctx, barX, barY, individualBarWidth, barHeight + 2, 2)
         ctx.fill()
 
         // Draw separator line between bars (black pixel line)
@@ -170,7 +187,7 @@ const drawMonkey = (ctx: CanvasRenderingContext2D, m: Monkey): void => {
         // Draw filled portion
         if (barFillRatio > 0) {
             ctx.fillStyle = barFillRatio > 0.5 ? "#10b981" : barFillRatio > 0.25 ? "#f59e0b" : "#ef4444"
-            drawRoundedRect(ctx, barX, barY, individualBarWidth * barFillRatio, barHeight, 2)
+            drawRoundedRect(ctx, barX, barY + 1, individualBarWidth * barFillRatio, barHeight, 2)
             ctx.fill()
         }
     }
@@ -286,29 +303,32 @@ const generateBackgroundCanvas = (width: number, height: number): HTMLCanvasElem
 const createDepthSortedObjects = (world: World, config: GameConfig): RenderObject[] => {
     const objects: RenderObject[] = []
 
-    // Add trees
+    // Add trees (use bottom edge for depth sorting)
     for (const tree of config.trees) {
+        const visualSize = tree.radius * 10
         objects.push({
             type: "tree",
-            y: tree.position.y,
+            y: tree.position.y + visualSize / 2, // Bottom edge of tree
             data: tree
         })
     }
 
-    // Add bananas
+    // Add bananas (use bottom edge for depth sorting)
     for (const banana of world.bananas) {
+        const bananaSize = 16
         objects.push({
             type: "banana",
-            y: banana.position.y,
+            y: banana.position.y + bananaSize / 2, // Bottom edge of banana
             data: banana
         })
     }
 
-    // Add monkeys
+    // Add monkeys (use bottom edge for depth sorting)
     for (const monkey of world.monkeys) {
+        const stats = getMonkeyStats(monkey.monkeyType)
         objects.push({
             type: "monkey",
-            y: monkey.position.y,
+            y: monkey.position.y + stats.size / 2, // Bottom edge of monkey
             data: monkey
         })
     }
@@ -317,7 +337,12 @@ const createDepthSortedObjects = (world: World, config: GameConfig): RenderObjec
     return objects.sort((a, b) => a.y - b.y)
 }
 
-export const renderWorld = (ctx: CanvasRenderingContext2D, world: World, config: GameConfig): void => {
+export const renderWorld = (
+    ctx: CanvasRenderingContext2D,
+    world: World,
+    config: GameConfig,
+    customFlags?: Map<string, string>
+): void => {
     ctx.clearRect(0, 0, config.width, config.height)
 
     // Generate background canvas once and cache it
@@ -348,7 +373,7 @@ export const renderWorld = (ctx: CanvasRenderingContext2D, world: World, config:
         } else if (obj.type === "banana") {
             drawBanana(ctx, obj.data as Banana)
         } else if (obj.type === "monkey") {
-            drawMonkey(ctx, obj.data as Monkey)
+            drawMonkey(ctx, obj.data as Monkey, customFlags)
         }
     }
 }

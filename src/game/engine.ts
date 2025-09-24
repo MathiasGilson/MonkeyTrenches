@@ -251,6 +251,11 @@ const normalize = (vector: Vector2): Vector2 => {
 
 const generateId = (): string => `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 
+// Generate random multiplier with ±5% variance (0.95 - 1.05)
+const generateRandomMultiplier = (): number => {
+    return 0.95 + Math.random() * 0.1 // 0.95 to 1.05
+}
+
 // Generate team color from team ID (0-9)
 export const getTeamColor = (teamId: string): string => {
     const colors = [
@@ -302,6 +307,25 @@ export const getTeamFlag = (teamId: string): string => {
 
     const index = parseInt(teamId) % flags.length
     return flags[index]
+}
+
+// Get country name for team
+export const getTeamCountry = (teamId: string): string => {
+    const countries = [
+        "United States", // Team 0
+        "France", // Team 1
+        "Russia", // Team 2
+        "India", // Team 3
+        "Vietnam", // Team 4
+        "Pakistan", // Team 5
+        "Indonesia", // Team 6
+        "Philippines", // Team 7
+        "Nigeria", // Team 8
+        "Brazil" // Team 9
+    ]
+
+    const index = parseInt(teamId) % countries.length
+    return countries[index]
 }
 
 // Process a transaction and update team pools
@@ -488,7 +512,9 @@ export const spawnMonkeys = ({
         lastAnimationUpdate: 0,
         isFighting: false,
         facingLeft: false,
-        collisionRadius: stats.collisionRadius
+        collisionRadius: stats.collisionRadius,
+        speedMultiplier: generateRandomMultiplier(),
+        damageMultiplier: generateRandomMultiplier()
     }))
 
     if (monkeysToReserve > 0) {
@@ -551,7 +577,9 @@ const spawnFromReserves = (world: World, config: GameConfig): World => {
                 lastAnimationUpdate: 0,
                 isFighting: false,
                 facingLeft: false,
-                collisionRadius: monkeyStats.collisionRadius
+                collisionRadius: monkeyStats.collisionRadius,
+                speedMultiplier: generateRandomMultiplier(),
+                damageMultiplier: generateRandomMultiplier()
             })
         }
 
@@ -719,7 +747,7 @@ export const stepWorld = ({
 
         const stats = getMonkeyStats(self.monkeyType)
 
-        const speed = stats.speed
+        const speed = stats.speed * self.speedMultiplier
         const proposedPos = {
             x: self.position.x + desiredVelocity.x * speed * dt,
             y: self.position.y + desiredVelocity.y * speed * dt
@@ -805,7 +833,8 @@ export const stepWorld = ({
             if (dist <= ATTACK_RANGE) {
                 const attackerStats = getMonkeyStats(attacker.monkeyType)
                 const oldHp = victim.hp
-                victim.hp = Math.max(0, victim.hp - attackerStats.damage)
+                const actualDamage = attackerStats.damage * attacker.damageMultiplier
+                victim.hp = Math.max(0, victim.hp - actualDamage)
                 victim.isUnderAttack = true
 
                 // Track kills when victim dies
